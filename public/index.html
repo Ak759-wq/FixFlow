@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FixFlow · Report it. Track it. Prove it.</title>
+  <meta name="description" content="FixFlow is an AI complaint copilot for PG and hostel residents: report issues by voice or text, track them until they're fixed, and protect your deposit with timestamped proof." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e0603a'/><path d='M9 22l5-12 4 8 2-4 3 8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ============ NAV ============ -->
+  <header class="nav" id="nav">
+    <a href="#top" class="brand">FIXFLOW</a>
+    <nav class="pills" aria-label="Sections">
+      <a href="#app" data-tab="report" class="pill active">Report</a>
+      <a href="#app" data-tab="track" class="pill">Track</a>
+      <a href="#app" data-tab="warden" class="pill">Warden</a>
+      <a href="#app" data-tab="movein" class="pill">Move-in</a>
+      <a href="#app" data-tab="deposit" class="pill">Deposit</a>
+    </nav>
+    <a href="#app" data-tab="report" class="cta">Report an issue</a>
+  </header>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" id="top">
+    <div class="hero-stage">
+      <div class="layer sky"></div>
+      <div class="sun"></div>
+      <h1 class="layer title" aria-label="FixFlow">FIXFLOW</h1>
+      <img class="layer building" src="img/building.webp" alt="A Bengaluru PG building with balconies and bougainvillea" />
+      <div class="layer fog"></div>
+      <img class="layer palm palm-l" src="img/palm.webp" alt="" aria-hidden="true" />
+      <img class="layer palm palm-r" src="img/palm.webp" alt="" aria-hidden="true" />
+      <img class="layer palm palm-tr" src="img/palm.webp" alt="" aria-hidden="true" />
+      <div class="layer whiteout"></div>
+
+      <div class="hero-copy">
+        <p class="eyebrow">PG &amp; Hostel Living · Bengaluru</p>
+        <h2 class="headline">Where every complaint<br />gets <b>fixed</b></h2>
+        <p class="sub">Speak or type your issue. FixFlow's AI sorts it, drafts the complaint, tracks every unfixed day, and keeps timestamped proof for your deposit.</p>
+        <div class="hero-actions">
+          <a href="#app" data-tab="report" class="btn primary">Report an issue</a>
+          <a href="#app" data-tab="warden" class="btn ghost">I'm a warden</a>
+        </div>
+        <div class="live">
+          <span><b id="statOpen">–</b> open</span>
+          <span><b id="statFixed">–</b> fixed</span>
+          <span><b id="statAvg">–</b> avg. days to fix</span>
+        </div>
+      </div>
+      <div class="scroll-hint">Scroll</div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section class="how wrap">
+    <div class="how-card"><span>01</span><h3>Report in your words</h3><p>Hindi, English or Hinglish, by voice or text. AI sets the category, urgency and writes a formal complaint.</p></div>
+    <div class="how-card"><span>02</span><h3>Every day is counted</h3><p>Each complaint shows how long it's been unfixed. One tap escalates: reminder, formal notice, consumer complaint.</p></div>
+    <div class="how-card"><span>03</span><h3>Proof for your deposit</h3><p>Move-in photos are timestamped and checked by AI, so unfair deductions at move-out can be challenged.</p></div>
+  </section>
+
+  <!-- ============ APP ============ -->
+  <main class="app wrap" id="app">
+    <div class="app-head">
+      <div>
+        <p class="eyebrow dark">The app</p>
+        <h2>Your stay, organised</h2>
+      </div>
+      <button class="profile-chip" id="profileChip" type="button">Join your PG</button>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="report" role="tab">Report issue</button>
+      <button class="tab" data-tab="track" role="tab">My complaints</button>
+      <button class="tab" data-tab="warden" role="tab">Warden dashboard</button>
+      <button class="tab" data-tab="movein" role="tab">Move-in proof</button>
+      <button class="tab" data-tab="deposit" role="tab">Deposit check</button>
+    </div>
+
+    <!-- Report -->
+    <section class="panel active" id="panel-report">
+      <div class="grid2">
+        <div class="card">
+          <h3>What's wrong?</h3>
+          <p class="muted">Describe it like you'd tell a friend. Example: "bathroom me 2 din se paani nahi aa raha".</p>
+          <div class="textarea-wrap">
+            <textarea id="issueText" rows="6" placeholder="Type here, or tap the mic and speak…"></textarea>
+            <button class="mic" id="micBtn" type="button" title="Speak your complaint" aria-label="Speak your complaint">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+            </button>
+          </div>
+          <div class="chips" id="examples">
+            <button type="button" class="chip">No water in bathroom since morning</button>
+            <button type="button" class="chip">Wi-Fi keeps disconnecting every night</button>
+            <button type="button" class="chip">Khana mein keede mile aaj lunch mein</button>
+            <button type="button" class="chip">Fan making sparks, switch is burnt</button>
+          </div>
+          <button class="btn primary full" id="analyzeBtn" type="button">Analyse with AI</button>
+        </div>
+
+        <div class="card result" id="resultCard">
+          <div class="empty" id="resultEmpty">
+            <div class="empty-icon">✦</div>
+            <p>Your AI-drafted complaint will appear here.</p>
+          </div>
+          <div id="resultBody" hidden>
+            <div class="badges">
+              <span class="badge" id="rCategory"></span>
+              <span class="badge urg" id="rUrgency"></span>
+            </div>
+            <h3 id="rTitle"></h3>
+            <p class="muted" id="rSummary"></p>
+            <label class="lbl" for="rDraft">Formal complaint (edit if you like)</label>
+            <textarea id="rDraft" rows="9"></textarea>
+            <div class="dupe" id="dupeBox" hidden></div>
+            <div class="row">
+              <button class="btn ghost" id="copyDraft" type="button">Copy</button>
+              <button class="btn primary" id="submitBtn" type="button">Submit to warden</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Track -->
+    <section class="panel" id="panel-track">
+      <div class="stats" id="myStats"></div>
+      <div class="list" id="myList"></div>
+    </section>
+
+    <!-- Warden -->
+    <section class="panel" id="panel-warden">
+      <div class="warden-lock card" id="wardenLock">
+        <h3>Warden sign-in</h3>
+        <p class="muted">Demo PG code <b>SUNRISE24</b>, PIN <b>1234</b>.</p>
+        <div class="row">
+          <input id="wCode" placeholder="PG code" value="SUNRISE24" />
+          <input id="wPin" placeholder="PIN" type="password" inputmode="numeric" />
+          <button class="btn primary" id="wLogin" type="button">Open dashboard</button>
+        </div>
+        <p class="error" id="wErr"></p>
+      </div>
+      <div id="wardenBody" hidden>
+        <div class="stats" id="wStats"></div>
+        <div class="wbar">
+          <div class="chart" id="wChart"></div>
+          <div class="filters">
+            <select id="fCat"><option value="">All categories</option></select>
+            <select id="fStatus"><option value="active">Open + in progress</option><option value="">All</option><option value="Open">Open</option><option value="In progress">In progress</option><option value="Fixed">Fixed</option></select>
+            <button class="btn ghost" id="wRefresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="list" id="wList"></div>
+      </div>
+    </section>
+
+    <!-- Move-in -->
+    <section class="panel" id="panel-movein">
+      <div class="grid2">
+        <div class="card">
+          <h3>Scan your room at move-in</h3>
+          <p class="muted">Upload a photo of each area. It's timestamped and locked, and AI notes any existing damage.</p>
+          <label class="lbl" for="mArea">Area</label>
+          <select id="mArea">
+            <option>Bedroom walls</option><option>Floor</option><option>Bathroom</option><option>Door &amp; lock</option><option>Window</option><option>Furniture</option><option>Fan &amp; lights</option>
+          </select>
+          <label class="drop" id="drop">
+            <input type="file" accept="image/*" id="mFile" hidden />
+            <span id="dropText">Tap to choose a photo</span>
+            <img id="mPreview" alt="" hidden />
+          </label>
+          <button class="btn primary full" id="mScan" type="button" disabled>Scan &amp; lock photo</button>
+        </div>
+        <div class="card">
+          <h3>Your move-in record</h3>
+          <div class="gallery" id="mGallery"><p class="muted">No photos yet.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Deposit -->
+    <section class="panel" id="panel-deposit">
+      <div class="grid2">
+        <div class="card">
+          <h3>Check the owner's deductions</h3>
+          <p class="muted">FixFlow compares them with your move-in photos and complaint history.</p>
+          <label class="lbl" for="dAmount">Security deposit (₹)</label>
+          <input id="dAmount" type="number" value="20000" min="0" />
+          <label class="lbl">Deductions</label>
+          <div id="dRows"></div>
+          <button class="btn ghost" id="dAdd" type="button">+ Add deduction</button>
+          <button class="btn primary full" id="dCheck" type="button">Check deductions</button>
+        </div>
+        <div class="card" id="dResult">
+          <div class="empty"><div class="empty-icon">₹</div><p>Your verdict and refund notice will appear here.</p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot wrap">
+    <span class="brand dark">FIXFLOW</span>
+    <span>Report it. Track it. Prove it. · Built for PromptWars × AI Vibeathon 2026</span>
+  </footer>
+
+  <!-- Profile modal -->
+  <dialog id="profileDlg">
+    <form method="dialog" id="profileForm">
+      <h3>Join your PG</h3>
+      <p class="muted">Demo PG code: <b>SUNRISE24</b></p>
+      <label class="lbl" for="pName">Your name</label>
+      <input id="pName" required placeholder="Aditya" />
+      <label class="lbl" for="pRoom">Room</label>
+      <input id="pRoom" required placeholder="204" />
+      <label class="lbl" for="pCode">PG code</label>
+      <input id="pCode" required value="SUNRISE24" />
+      <p class="error" id="pErr"></p>
+      <div class="row end">
+        <button class="btn ghost" value="cancel" formnovalidate type="submit">Cancel</button>
+        <button class="btn primary" id="pSave" value="save" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

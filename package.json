@@ -1,0 +1,9 @@
+{
+  "name": "fixflow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FixFlow: AI complaint copilot for PG and hostel residents",
+  "scripts": { "dev": "node dev-server.js" },
+  "engines": { "node": ">=18" }
+}

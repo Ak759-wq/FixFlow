@@ -1,0 +1,7 @@
+-- Demo data for SUNRISE24
+insert into ff_complaints (pg_code, resident_name, room, text, title, summary, draft, category, urgency, status, created_at, seen_at, fixed_at, warden_note) values
+('SUNRISE24','Rahul','108','Wi-Fi drops every night after 11, cannot submit assignments','Wi-Fi disconnects every night','Wi-Fi drops nightly after 11 PM.','Dear Warden, ...','Wi-Fi','Medium','In progress', now() - interval '4 days', now() - interval '3 days', null, 'Router replacement ordered'),
+('SUNRISE24','Sneha','302','Geyser in 3rd floor bathroom not working, cold water only','Third floor geyser not working','No hot water on 3rd floor.','Dear Warden, ...','Electricity','Medium','Open', now() - interval '6 days', null, null, null),
+('SUNRISE24','Imran','205','Found an insect in dal at lunch today','Insect found in lunch dal','Food hygiene issue at lunch.','Dear Warden, ...','Food','High','Fixed', now() - interval '9 days', now() - interval '9 days', now() - interval '7 days', 'Kitchen deep-cleaned, cook warned'),
+('SUNRISE24','Priya','110','Main door lock of room is loose and does not close properly','Room door lock is loose','Door does not lock securely.','Dear Warden, ...','Safety','High','Open', now() - interval '2 days', null, null, null),
+('SUNRISE24','Karthik','214','Bathroom tap leaking continuously','Bathroom tap leaking','Continuous tap leak.','Dear Warden, ...','Water','Low','Fixed', now() - interval '12 days', now() - interval '11 days', now() - interval '10 days', 'Washer replaced');
