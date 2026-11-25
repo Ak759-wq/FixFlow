@@ -1,7 +1,18 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, getDocs, query, where, orderBy, setDoc, addDoc, updateDoc, deleteDoc, writeBatch, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
 
 const CFG = window.FF_CONFIG;
-const db = createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { flowType: "pkce", detectSessionInUrl: true } });
+const firebaseConfig = CFG.FIREBASE_CONFIG;
+const firebaseConfigured = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"]
+  .every((key) => firebaseConfig?.[key] && !String(firebaseConfig[key]).startsWith("REPLACE_"));
+const firebaseApp = firebaseConfigured ? initializeApp(firebaseConfig) : null;
+const auth = firebaseApp ? getAuth(firebaseApp) : null;
+const db = firebaseApp ? getFirestore(firebaseApp) : null;
+const storage = firebaseApp ? getStorage(firebaseApp) : null;
+const functions = firebaseApp ? getFunctions(firebaseApp, CFG.FUNCTIONS_REGION || "us-central1") : null;
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -84,12 +95,15 @@ addEventListener("resize", onScroll);
 onScroll();
 
 async function loadHeroStats() {
-  const { data } = await db.rpc("ff_stats");
-  const s = data?.[0];
-  if (!s) return;
-  $("#statOpen").textContent = s.open_count;
-  $("#statFixed").textContent = s.fixed_count;
-  $("#statAvg").textContent = s.avg_days ?? "–";
+  if (!functions) return;
+  try {
+    const { data } = await httpsCallable(functions, "getPublicStats")({});
+    $("#statOpen").textContent = data.open_count;
+    $("#statFixed").textContent = data.fixed_count;
+    $("#statAvg").textContent = data.avg_days ?? "–";
+  } catch (error) {
+    console.error("Could not load public complaint stats:", error);
+  }
 }
 
 /* ================= offline fallbacks ================= */
@@ -164,92 +178,162 @@ const demoPgOpen = () => [
 
 /* ================= data layer ================= */
 const live = () => S.mode === "live";
-async function must(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
+function requireFirebase() {
+  if (!firebaseConfigured) throw new Error("Firebase is not configured. Add your Firebase web app settings to public/config.js.");
+}
+function rowFromDoc(snapshot) {
+  if (!snapshot.exists()) return null;
+  const row = { id: snapshot.id, ...snapshot.data() };
+  for (const key of ["captured_at", "locked_at", "reported_at", "fixed_at", "created_at", "updated_at"]) {
+    const value = row[key];
+    if (value?.toDate) row[key] = value.toDate().toISOString();
+    else if (value instanceof Date) row[key] = value.toISOString();
+  }
+  return row;
+}
+async function ownerRows(name, sortField, direction = "asc") {
+  const q = query(collection(db, name), where("owner", "==", S.user.uid), orderBy(sortField, direction));
+  const result = await getDocs(q);
+  return result.docs.map(rowFromDoc);
+}
 
 async function loadLive() {
-  const id = S.user.id;
-  const [profile, tenancy, photos, complaints, deductions, notices] = await Promise.all([
-    must(db.from("ff_profiles").select("*").eq("id", id).maybeSingle()),
-    must(db.from("ff_tenancies").select("*").eq("owner", id).maybeSingle()),
-    must(db.from("ff_photos").select("*").order("captured_at", { ascending: false })),
-    must(db.from("ff_complaints").select("*").eq("owner", id).order("reported_at", { ascending: false })),
-    must(db.from("ff_deductions").select("*").order("created_at", { ascending: true })),
-    must(db.from("ff_notices").select("*")),
+  const id = S.user.uid;
+  const [profileSnapshot, tenancySnapshot, photos, complaints, deductions, noticeSnapshots] = await Promise.all([
+    getDoc(doc(db, "profiles", id)),
+    getDoc(doc(db, "tenancies", id)),
+    ownerRows("photos", "captured_at", "desc"),
+    ownerRows("complaints", "reported_at", "desc"),
+    ownerRows("deductions", "created_at"),
+    getDocs(collection(db, "users", id, "notices")),
   ]);
-  const md = S.user.user_metadata || {};
-  S.profile = profile || { name: md.name || md.full_name || S.user.email.split("@")[0], phone: md.phone || "" };
-  if (!profile) await db.from("ff_profiles").upsert({ id, name: S.profile.name, phone: S.profile.phone || null });
-  S.tenancy = tenancy; S.photos = photos; S.complaints = complaints; S.deductions = deductions;
-  S.notices = Object.fromEntries(notices.map((n) => [n.kind, n.body]));
+  let profile = rowFromDoc(profileSnapshot);
+  if (!profile) {
+    const profileRef = doc(db, "profiles", id);
+    await runTransaction(db, async (transaction) => {
+      const current = await transaction.get(profileRef);
+      if (!current.exists()) {
+        transaction.set(profileRef, { name: S.user.displayName || S.user.email.split("@")[0], phone: "", created_at: serverTimestamp() });
+      }
+    });
+    profile = rowFromDoc(await getDoc(profileRef));
+  }
+  S.profile = profile;
+  S.tenancy = rowFromDoc(tenancySnapshot);
+  S.photos = photos;
+  S.complaints = complaints;
+  S.deductions = deductions;
+  S.notices = Object.fromEntries(noticeSnapshots.docs.map((n) => [n.id, n.data().body]));
 }
 
 const api = {
   async saveTenancy(t) {
     if (!live()) { S.tenancy = { ...S.tenancy, ...t }; return; }
-    S.tenancy = await must(db.from("ff_tenancies").upsert({ ...t, owner: S.user.id }, { onConflict: "owner" }).select().single());
+    const tenancyRef = doc(db, "tenancies", S.user.uid);
+    const existing = await getDoc(tenancyRef);
+    await setDoc(tenancyRef, { ...t, owner: S.user.uid, created_at: existing.exists() ? existing.data().created_at : serverTimestamp(), updated_at: serverTimestamp() }, { merge: true });
+    S.tenancy = rowFromDoc(await getDoc(tenancyRef));
   },
   async addPhoto(file, area) {
     const { blob, dataUrl } = await compress(file);
-    let url;
-    if (live()) {
-      const path = `${S.user.id}/${Date.now()}-${area}.jpg`;
-      const up = await db.storage.from("ff-photos").upload(path, blob, { contentType: "image/jpeg" });
-      if (up.error) throw new Error(up.error.message);
-      url = db.storage.from("ff-photos").getPublicUrl(path).data.publicUrl;
-    } else url = URL.createObjectURL(blob);
     let ins = { tags: [], summary: "AI inspection unavailable right now. The photo is still saved with its timestamp." };
     try { ins = await ai("inspect", { image: dataUrl, area }); } catch {}
-    const row = { area, photo_url: url, ai_tags: ins.tags || [], ai_summary: ins.summary || "" };
-    if (live()) S.photos.unshift(await must(db.from("ff_photos").insert(row).select().single()));
-    else S.photos.unshift({ ...row, id: uid(), captured_at: new Date().toISOString(), locked: false });
+    const row = { area, ai_tags: ins.tags || [], ai_summary: ins.summary || "" };
+    if (live()) {
+      const photoRef = doc(collection(db, "photos"));
+      const path = `users/${S.user.uid}/movein/${photoRef.id}`;
+      await setDoc(photoRef, { ...row, owner: S.user.uid, photo_url: "", storage_path: path, captured_at: serverTimestamp(), locked: false, locked_at: null });
+      try {
+        await uploadBytes(ref(storage, path), blob, { contentType: "image/jpeg" });
+        await updateDoc(photoRef, { photo_url: await getDownloadURL(ref(storage, path)) });
+        S.photos.unshift(rowFromDoc(await getDoc(photoRef)));
+      } catch (error) {
+        try { await deleteObject(ref(storage, path)); }
+        catch (cleanupError) {
+          if (cleanupError.code !== "storage/object-not-found") {
+            throw new AggregateError([error, cleanupError], "Photo upload failed and its stored file could not be removed.");
+          }
+        }
+        try { await deleteDoc(photoRef); }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], "Photo upload failed and its record could not be removed."); }
+        throw error;
+      }
+    } else {
+      S.photos.unshift({ ...row, photo_url: URL.createObjectURL(blob), id: uid(), captured_at: new Date().toISOString(), locked: false });
+    }
   },
   async deletePhoto(id) {
-    if (live()) await must(db.from("ff_photos").delete().eq("id", id));
+    if (live()) {
+      const photoRef = doc(db, "photos", id);
+      const snapshot = await getDoc(photoRef);
+      const photo = rowFromDoc(snapshot);
+      if (!photo || photo.owner !== S.user.uid || photo.locked) throw new Error("This photo can't be removed.");
+      await deleteObject(ref(storage, photo.storage_path));
+      await deleteDoc(photoRef);
+    }
     S.photos = S.photos.filter((p) => p.id !== id);
   },
   async lockPhotos(ids) {
     if (live()) {
-      const rows = await must(db.from("ff_photos").update({ locked: true }).in("id", ids).select());
-      rows.forEach((r) => { const i = S.photos.findIndex((p) => p.id === r.id); if (i > -1) S.photos[i] = r; });
+      const batch = writeBatch(db);
+      ids.forEach((id) => batch.update(doc(db, "photos", id), { locked: true, locked_at: serverTimestamp() }));
+      await batch.commit();
+      for (const id of ids) {
+        const row = rowFromDoc(await getDoc(doc(db, "photos", id)));
+        const i = S.photos.findIndex((p) => p.id === id);
+        if (row && i > -1) S.photos[i] = row;
+      }
     } else S.photos.forEach((p) => { if (ids.includes(p.id)) { p.locked = true; p.locked_at = new Date().toISOString(); } });
   },
   async addComplaint(c) {
-    const row = { ...c, resident_name: S.profile.name, room: S.tenancy.room, pg_code: S.tenancy.pg_code || null };
-    if (live()) S.complaints.unshift(await must(db.from("ff_complaints").insert(row).select().single()));
-    else S.complaints.unshift({ ...row, id: uid(), status: "open", supporters: 1, reported_at: new Date().toISOString() });
+    const row = { ...c, owner: S.user?.uid || null, resident_name: S.profile.name, room: S.tenancy.room, pg_code: S.tenancy.pg_code || null };
+    if (live()) {
+      const ref = await addDoc(collection(db, "complaints"), { ...row, status: "open", supporters: 1, reported_at: serverTimestamp(), fixed_at: null });
+      S.complaints.unshift(rowFromDoc(await getDoc(ref)));
+    } else S.complaints.unshift({ ...row, id: uid(), status: "open", supporters: 1, reported_at: new Date().toISOString() });
   },
   async setComplaintStatus(id, status) {
     if (live()) {
-      const r = await must(db.from("ff_complaints").update({ status }).eq("id", id).select().single());
-      S.complaints = S.complaints.map((c) => (c.id === id ? r : c));
+      const ref = doc(db, "complaints", id);
+      await updateDoc(ref, { status, fixed_at: status === "fixed" ? serverTimestamp() : null });
+      const row = rowFromDoc(await getDoc(ref));
+      S.complaints = S.complaints.map((c) => (c.id === id ? row : c));
     } else S.complaints = S.complaints.map((c) => (c.id === id ? { ...c, status, fixed_at: status === "fixed" ? new Date().toISOString() : null } : c));
   },
   async pgOpen() {
     if (!live()) return demoPgOpen();
     if (!S.tenancy?.pg_code) return [];
-    const { data } = await db.rpc("ff_pg_open", { p_code: S.tenancy.pg_code });
-    return data || [];
+    const { data } = await httpsCallable(functions, "listSimilarComplaints")({ code: S.tenancy.pg_code });
+    return data.complaints || [];
   },
   async support(id) {
     if (!live()) return 0;
-    const { data, error } = await db.rpc("ff_support", { p_id: id });
-    if (error) throw new Error(error.message);
-    return data;
+    const { data } = await httpsCallable(functions, "supportComplaint")({ id });
+    return data.supporters;
   },
   async addDeduction(d) {
-    if (live()) { const r = await must(db.from("ff_deductions").insert(d).select().single()); S.deductions.push(r); return r; }
+    if (live()) {
+      const ref = await addDoc(collection(db, "deductions"), { ...d, owner: S.user.uid, created_at: serverTimestamp() });
+      const row = rowFromDoc(await getDoc(ref));
+      S.deductions.push(row);
+      return row;
+    }
     const r = { ...d, id: uid(), created_at: new Date().toISOString() }; S.deductions.push(r); return r;
   },
   async updateDeduction(id, patch) {
-    if (live()) await must(db.from("ff_deductions").update(patch).eq("id", id));
+    if (live()) await updateDoc(doc(db, "deductions", id), patch);
     S.deductions = S.deductions.map((d) => (d.id === id ? { ...d, ...patch } : d));
   },
   async deleteDeduction(id) {
-    if (live()) await must(db.from("ff_deductions").delete().eq("id", id));
+    if (live()) await deleteDoc(doc(db, "deductions", id));
     S.deductions = S.deductions.filter((d) => d.id !== id);
   },
   async saveNotices(obj) {
-    if (live()) await must(db.from("ff_notices").upsert(Object.entries(obj).map(([kind, body]) => ({ owner: S.user.id, kind, body, updated_at: new Date().toISOString() })), { onConflict: "owner,kind" }));
+    if (live()) {
+      const batch = writeBatch(db);
+      Object.entries(obj).forEach(([kind, body]) => batch.set(doc(db, "users", S.user.uid, "notices", kind), { owner: S.user.uid, body, updated_at: serverTimestamp() }, { merge: true }));
+      await batch.commit();
+    }
     S.notices = { ...S.notices, ...obj };
   },
 };
@@ -300,7 +384,7 @@ function exitDemo() {
 }
 $("#signOutBtn").addEventListener("click", async () => {
   if (S.mode === "demo") { exitDemo(); showView(); return; }
-  await db.auth.signOut();
+  await signOut(auth);
 });
 $("#editPgBtn").addEventListener("click", () => go("setup"));
 
@@ -318,9 +402,21 @@ $$(".seg-btn").forEach((b) => b.addEventListener("click", () => setAuthMode(b.da
 $("#googleBtn").addEventListener("click", async () => {
   const btn = $("#googleBtn");
   busy(btn, true, "Opening Google…");
-  sessionStorage.setItem("ff_oauth", "1");
-  const { error } = await db.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: "select_account" } } });
-  if (error) { busy(btn, false); sessionStorage.removeItem("ff_oauth"); $("#aErr").textContent = /not enabled|provider/i.test(error.message) ? "Google sign-in isn't switched on yet. Use email for now." : error.message; }
+  $("#aErr").textContent = "";
+  try {
+    requireFirebase();
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    await signInWithPopup(auth, provider);
+  } catch (error) {
+    const messages = {
+      "auth/popup-blocked": "Your browser blocked the Google sign-in window. Allow pop-ups and try again.",
+      "auth/popup-closed-by-user": "Google sign-in was cancelled.",
+      "auth/unauthorized-domain": "This site isn't authorized for Firebase Authentication. Add its domain in Firebase Console.",
+      "auth/operation-not-allowed": "Enable Google sign-in in Firebase Console under Authentication providers.",
+    };
+    $("#aErr").textContent = messages[error.code] || error.message || "Unable to start Google sign-in.";
+  } finally { busy(btn, false); }
 });
 $("#authForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -332,24 +428,33 @@ $("#authForm").addEventListener("submit", async (e) => {
   const btn = $("#aSubmit");
   busy(btn, true, authMode === "signup" ? "Creating account…" : "Logging in…");
   try {
+    requireFirebase();
     if (authMode === "signup") {
-      const { data, error } = await db.auth.signUp({ email, password, options: { data: { name, phone } } });
-      if (error) throw error;
-      if (!data.session) { err("Check your inbox to confirm your email, then log in."); return; }
-      await db.from("ff_profiles").upsert({ id: data.user.id, name, phone: phone || null });
+      const { user } = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(user, { displayName: name });
+      await setDoc(doc(db, "profiles", user.uid), { name, phone: phone || "", created_at: serverTimestamp() });
     } else {
-      const { error } = await db.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      await signInWithEmailAndPassword(auth, email, password);
     }
   } catch (ex) {
-    err(/registered/i.test(ex.message) ? "This email already has an account. Log in instead." : /invalid login/i.test(ex.message) ? "Wrong email or password." : ex.message);
+    const messages = {
+      "auth/email-already-in-use": "This email already has an account. Log in instead.",
+      "auth/invalid-credential": "Wrong email or password.",
+      "auth/user-not-found": "Wrong email or password.",
+      "auth/wrong-password": "Wrong email or password.",
+      "auth/weak-password": "Password needs at least 6 characters.",
+      "auth/invalid-email": "Enter a valid email.",
+      "auth/unauthorized-domain": "This site isn't authorized for Firebase Authentication. Add its domain in Firebase Console.",
+      "auth/operation-not-allowed": "Enable email/password sign-in in Firebase Console under Authentication providers.",
+    };
+    err(messages[ex.code] || ex.message || "Authentication failed.");
   } finally { busy(btn, false); }
 });
 
-async function onSession(session) {
-  if (session?.user) {
+async function onSession(user) {
+  if (user) {
     sessionStorage.removeItem("ff_demo");
-    S.mode = "live"; S.user = session.user;
+    S.mode = "live"; S.user = user;
     try { await loadLive(); } catch (e) { toast(e.message, true); }
   } else if (S.mode === "live") {
     exitDemo(); S.user = null;
@@ -358,20 +463,14 @@ async function onSession(session) {
   }
   showView();
 }
-db.auth.onAuthStateChange((evt, session) => {
-  if (evt === "INITIAL_SESSION" || evt === "SIGNED_IN" || evt === "SIGNED_OUT") {
-    if (evt === "SIGNED_IN" && S.mode === "live" && S.user?.id === session?.user?.id) return;
-    // defer: calling Supabase inside this callback can deadlock the auth lock
-    setTimeout(async () => {
-      await onSession(session);
-      if (session && sessionStorage.getItem("ff_oauth")) {
-        sessionStorage.removeItem("ff_oauth");
-        history.replaceState(null, "", location.pathname);
-        $("#app").scrollIntoView({ behavior: "smooth" });
-      }
-      if (evt === "SIGNED_IN") toast(`Welcome${S.profile?.name ? ", " + S.profile.name.split(" ")[0] : ""}!`);
-    }, 0);
-  }
+let authInitialized = false;
+if (auth) onAuthStateChanged(auth, (user) => {
+  if (user && S.mode === "live" && S.user?.uid === user.uid) return;
+  const isInitialState = !authInitialized;
+  authInitialized = true;
+  void onSession(user).then(() => {
+    if (user && !isInitialState) toast(`Welcome${S.profile?.name ? ", " + S.profile.name.split(" ")[0] : ""}!`);
+  }).catch((error) => toast(error.message, true));
 });
 
 /* ================= setup ================= */
@@ -405,8 +504,7 @@ $("#pgForm").addEventListener("submit", async (e) => {
   busy(btn, true, "Saving…");
   try {
     if (t.pg_code && live()) {
-      const { data } = await db.from("ff_pgs").select("code").eq("code", t.pg_code).maybeSingle();
-      if (!data) { busy(btn, false); return err("That PG code isn't registered. Leave it empty, or try SUNRISE24."); }
+      if (!(await getDoc(doc(db, "pgs", t.pg_code))).exists()) { busy(btn, false); return err("That PG code isn't registered. Leave it empty, or try SUNRISE24."); }
     }
     const first = !S.tenancy;
     await api.saveTenancy(t);
@@ -594,16 +692,16 @@ $("#cSave").addEventListener("click", async () => {
   busy(btn, true, "Saving…");
   try {
     let photo_url = null;
+    let photo_path = null;
     if (S.cPhoto) {
       const { blob } = await compress(S.cPhoto);
       if (live()) {
-        const path = `${S.user.id}/c-${Date.now()}.jpg`;
-        const up = await db.storage.from("ff-photos").upload(path, blob, { contentType: "image/jpeg" });
-        if (up.error) throw new Error(up.error.message);
-        photo_url = db.storage.from("ff-photos").getPublicUrl(path).data.publicUrl;
+        photo_path = `users/${S.user.uid}/complaints/${Date.now()}-${uid()}.jpg`;
+        await uploadBytes(ref(storage, photo_path), blob, { contentType: "image/jpeg" });
+        photo_url = await getDownloadURL(ref(storage, photo_path));
       } else photo_url = URL.createObjectURL(blob);
     }
-    await api.addComplaint({ category: S.analysis.category, urgency: S.analysis.urgency, title: $("#rTitle").value.trim() || S.analysis.title, description: S.analysis.text, draft: $("#rDraft").value, photo_url });
+    await api.addComplaint({ category: S.analysis.category, urgency: S.analysis.urgency, title: $("#rTitle").value.trim() || S.analysis.title, description: S.analysis.text, draft: $("#rDraft").value, photo_url, photo_path });
     toast("Complaint logged. The day counter has started.");
     resetComposer(); renderComplaints();
   } catch (ex) { toast(ex.message, true); }
@@ -811,17 +909,21 @@ $("#wForm").addEventListener("submit", async (e) => {
   if (!code || !pin) return ($("#wErr").textContent = "Enter your PG code and PIN.");
   const btn = $("#wGo");
   busy(btn, true, "Checking…");
-  const { data: ok } = await db.rpc("ff_check_pin", { p_code: code, p_pin: pin });
-  busy(btn, false);
-  if (!ok) { $("#wBoard").hidden = true; return ($("#wErr").textContent = "Wrong PG code or PIN."); }
-  W = { code, pin };
-  await loadWarden();
+  try {
+    requireFirebase();
+    const { data } = await httpsCallable(functions, "checkWardenPin")({ code, pin });
+    if (!data.ok) { $("#wBoard").hidden = true; $("#wErr").textContent = "Wrong PG code or PIN."; return; }
+    W = { code, pin };
+    await loadWarden();
+  } catch (error) {
+    $("#wBoard").hidden = true;
+    $("#wErr").textContent = error.message || "Unable to verify the PG PIN.";
+  } finally { busy(btn, false); }
 });
 async function loadWarden() {
-  const { data, error } = await db.rpc("ff_warden_list", { p_code: W.code, p_pin: W.pin });
-  if (error) return ($("#wErr").textContent = error.message);
+  const { data } = await httpsCallable(functions, "listWardenComplaints")({ code: W.code, pin: W.pin });
   const rank = { open: 0, in_progress: 1, fixed: 2 };
-  const list = data.sort((a, b) => rank[a.status] - rank[b.status] || URG[a.urgency] - URG[b.urgency] || b.supporters - a.supporters || new Date(a.reported_at) - new Date(b.reported_at));
+  const list = data.complaints.sort((a, b) => rank[a.status] - rank[b.status] || URG[a.urgency] - URG[b.urgency] || b.supporters - a.supporters || new Date(a.reported_at) - new Date(b.reported_at));
   const n = (s) => list.filter((c) => c.status === s).length;
   $("#wStats").innerHTML = `<div class="stat warn"><span>Open</span><b>${n("open")}</b></div><div class="stat"><span>In progress</span><b>${n("in_progress")}</b></div><div class="stat good"><span>Fixed</span><b>${n("fixed")}</b></div>`;
   $("#wList").innerHTML = list.map((c) => {
@@ -842,10 +944,12 @@ $("#wList").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-w]");
   if (!b) return;
   busy(b, true, "Saving…");
-  const { error } = await db.rpc("ff_warden_set", { p_code: W.code, p_pin: W.pin, p_id: b.dataset.w, p_status: b.dataset.s });
-  if (error) { toast(error.message, true); busy(b, false); return; }
-  toast(b.dataset.s === "fixed" ? "Marked fixed. The resident sees it now." : "Marked in progress.");
-  await loadWarden(); loadHeroStats();
+  try {
+    await httpsCallable(functions, "setWardenComplaintStatus")({ code: W.code, pin: W.pin, id: b.dataset.w, status: b.dataset.s });
+    toast(b.dataset.s === "fixed" ? "Marked fixed. The resident sees it now." : "Marked in progress.");
+    await loadWarden(); loadHeroStats();
+  } catch (error) { toast(error.message, true); }
+  finally { busy(b, false); }
 });
 
 /* ================= boot ================= */

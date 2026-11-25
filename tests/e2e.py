@@ -83,10 +83,13 @@ async def main():
         await pg.wait_for_selector("#authView:not([hidden])")
         check("exit demo -> sign up", await pg.is_visible("#aName"))
 
-        # ---- google button starts OAuth ----
-        async with pg.expect_request(lambda r: "/auth/v1/authorize" in r.url and "provider=google" in r.url, timeout=15000) as rq:
+        # ---- Google button opens Firebase OAuth ----
+        async with pg.expect_popup() as popup_info:
             await pg.click("#googleBtn")
-        check("google button starts OAuth", "redirect_to" in (await rq.value).url)
+        popup = await popup_info.value
+        await popup.wait_for_load_state()
+        check("Google button opens Firebase OAuth", "google.com" in popup.url or "/__/auth/handler" in popup.url, popup.url)
+        await popup.close()
         await pg.goto(BASE, wait_until="networkidle")
         await pg.evaluate("document.querySelector('#app').scrollIntoView()")
         await pg.wait_for_selector("#authView:not([hidden])")
@@ -121,18 +124,30 @@ async def main():
         await pg.click("#lockBtn"); await pg.click("#lockConfirm")
         await pg.wait_for_selector(".photo .badge.lock")
         check("lock record", "Locked" in await pg.inner_text(".photo"))
+        photo_id_a = await pg.locator("#photoGrid .photo").first.get_attribute("data-id")
         await shot(pg, "v2_7_scan")
         tamper = await pg.evaluate("""async () => {
-            const m = await import('https://esm.sh/@supabase/supabase-js@2.45.4');
-            const c = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY);
-            await c.auth.signInWithPassword({ email: '%s', password: '%s' });
-            const { data } = await c.from('ff_photos').select('id').limit(1);
-            const u = await c.from('ff_photos').update({ ai_summary: 'hacked' }).eq('id', data[0].id);
-            const d = await c.from('ff_photos').delete().eq('id', data[0].id);
-            const after = await c.from('ff_photos').select('ai_summary').eq('id', data[0].id).single();
-            return { u: u.error && u.error.message, d: d.error && d.error.message, summary: after.data.ai_summary };
+            const [appApi, authApi, dbApi] = await Promise.all([
+                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
+                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
+                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js')
+            ]);
+            const app = appApi.initializeApp(FF_CONFIG.FIREBASE_CONFIG, `RulesTestA-${Date.now()}`);
+            const auth = authApi.getAuth(app);
+            await authApi.signInWithEmailAndPassword(auth, '%s', '%s');
+            const db = dbApi.getFirestore(app);
+            const photos = await dbApi.getDocs(dbApi.query(dbApi.collection(db, 'photos'), dbApi.where('owner', '==', auth.currentUser.uid)));
+            const photo = photos.docs.find(x => x.data().locked);
+            const ref = dbApi.doc(db, 'photos', photo.id);
+            let updateDenied = false, deleteDenied = false;
+            try { await dbApi.updateDoc(ref, { ai_summary: 'hacked' }); } catch { updateDenied = true; }
+            try { await dbApi.deleteDoc(ref); } catch { deleteDenied = true; }
+            const after = await dbApi.getDoc(ref);
+            const result = { updateDenied, deleteDenied, summary: after.data().ai_summary };
+            await appApi.deleteApp(app);
+            return result;
         }""" % (email_a, pw))
-        check("locked photo is read-only in DB", tamper["u"] and tamper["d"] and tamper["summary"] != "hacked", str(tamper))
+        check("locked photo is read-only in Firestore", tamper["updateDenied"] and tamper["deleteDenied"] and tamper["summary"] != "hacked", str(tamper))
 
         # ---- complaints ----
         await pg.click(".nav-item[data-screen=complaints]")
@@ -148,6 +163,7 @@ async def main():
         await shot(pg, "v2_8_complaint_ai")
         await pg.click("#cSave")
         await pg.wait_for_selector("#cList .item")
+        complaint_id_a = await pg.locator("#cList .item").first.get_attribute("data-id")
         check("complaint logged with counter", "0" in await pg.inner_text("#cList .days") and "unfixed" in await pg.inner_text("#cList .days"))
         await pg.fill("#cText", "Geyser not working since 2 days, only cold water")
         await pg.click("#cAnalyze"); await pg.wait_for_selector("#cBody:not([hidden])", timeout=60000)
@@ -206,17 +222,31 @@ async def main():
         await pg.click(".seg-btn[data-auth=signup]")
         await pg.fill("#aName", "Tester B"); await pg.fill("#aEmail", email_b); await pg.fill("#aPass", pw)
         await pg.click("#aSubmit"); await pg.wait_for_selector("#s-setup.active")
-        leak = await pg.evaluate("""async () => {
-            const m = await import('https://esm.sh/@supabase/supabase-js@2.45.4');
-            const c = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY);
-            await c.auth.signInWithPassword({ email: '%s', password: '%s' });
-            const a = await c.from('ff_complaints').select('id'); const b = await c.from('ff_photos').select('id');
-            const anon = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY, { auth: { persistKey: 'x', storageKey: 'anon-x' } });
-            await anon.auth.signOut();
-            const z = await anon.from('ff_complaints').select('id');
-            return { comp: (a.data||[]).length, photos: (b.data||[]).length, anon: (z.data||[]).length };
-        }""" % (email_b, pw))
-        check("RLS: other user + anon see no private data", leak["comp"] == 0 and leak["photos"] == 0 and leak["anon"] == 0, str(leak))
+        leak = await pg.evaluate("""async (ids) => {
+            const [appApi, authApi, dbApi] = await Promise.all([
+                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
+                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
+                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js')
+            ]);
+            const app = appApi.initializeApp(FF_CONFIG.FIREBASE_CONFIG, `RulesTestB-${Date.now()}`);
+            const auth = authApi.getAuth(app);
+            await authApi.signInWithEmailAndPassword(auth, '%s', '%s');
+            const db = dbApi.getFirestore(app);
+            const ownComplaints = await dbApi.getDocs(dbApi.query(dbApi.collection(db, 'complaints'), dbApi.where('owner', '==', auth.currentUser.uid)));
+            const ownPhotos = await dbApi.getDocs(dbApi.query(dbApi.collection(db, 'photos'), dbApi.where('owner', '==', auth.currentUser.uid)));
+            let complaintDenied = false, photoDenied = false;
+            try { await dbApi.getDoc(dbApi.doc(db, 'complaints', ids.complaint)); } catch { complaintDenied = true; }
+            try { await dbApi.getDoc(dbApi.doc(db, 'photos', ids.photo)); } catch { photoDenied = true; }
+            const anonApp = appApi.initializeApp(FF_CONFIG.FIREBASE_CONFIG, `RulesTestAnon-${Date.now()}`);
+            const anonDb = dbApi.getFirestore(anonApp);
+            let anonDenied = false;
+            try { await dbApi.getDoc(dbApi.doc(anonDb, 'complaints', ids.complaint)); } catch { anonDenied = true; }
+            const result = { own: ownComplaints.size === 0 && ownPhotos.size === 0, complaintDenied, photoDenied, anonDenied };
+            await appApi.deleteApp(app);
+            await appApi.deleteApp(anonApp);
+            return result;
+        }""" % (email_b, pw), {"complaint": complaint_id_a, "photo": photo_id_a})
+        check("Firestore rules isolate private tenant data", leak["own"] and leak["complaintDenied"] and leak["photoDenied"] and leak["anonDenied"], str(leak))
         await pg.click("#signOutBtn")
 
         # ---- warden ----

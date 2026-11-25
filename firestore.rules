@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owns(data) {
+      return signedIn() && data.owner == request.auth.uid;
+    }
+
+    match /pgs/{code} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /profiles/{uid} {
+      allow read, create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'created_at']);
+      allow delete: if false;
+    }
+
+    match /tenancies/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.owner == request.auth.uid;
+      allow update: if signedIn() && request.auth.uid == uid
+        && resource.data.owner == request.auth.uid
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.created_at == resource.data.created_at;
+      allow delete: if false;
+    }
+
+    match /photos/{photoId} {
+      allow read: if owns(resource.data);
+      allow create: if owns(request.resource.data)
+        && request.resource.data.locked == false
+        && request.resource.data.captured_at == request.time
+        && request.resource.data.locked_at == null;
+      allow update: if owns(resource.data)
+        && !resource.data.locked
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.captured_at == resource.data.captured_at
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['locked', 'locked_at', 'photo_url'])
+        && ((request.resource.data.locked == false
+            && request.resource.data.locked_at == resource.data.locked_at)
+          || (request.resource.data.locked == true && request.resource.data.locked_at == request.time));
+      allow delete: if owns(resource.data) && !resource.data.locked;
+    }
+
+    match /complaints/{complaintId} {
+      allow read: if owns(resource.data);
+      allow create: if owns(request.resource.data)
+        && request.resource.data.status == 'open'
+        && request.resource.data.supporters == 1
+        && request.resource.data.reported_at == request.time
+        && request.resource.data.fixed_at == null;
+      allow update: if owns(resource.data)
+        && resource.data.status != 'fixed'
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'fixed_at'])
+        && request.resource.data.status == 'fixed'
+        && request.resource.data.fixed_at == request.time;
+      allow delete: if false;
+    }
+
+    match /deductions/{deductionId} {
+      allow read: if owns(resource.data);
+      allow create: if owns(request.resource.data)
+        && request.resource.data.created_at == request.time;
+      allow update: if owns(resource.data)
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['ai_verdict', 'ai_reason', 'matched_photo_id']);
+      allow delete: if owns(resource.data);
+    }
+
+    match /users/{uid}/notices/{kind} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.body is string;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
