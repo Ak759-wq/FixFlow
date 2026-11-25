@@ -6,74 +6,71 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const DAY = 864e5;
-const URG_RANK = { High: 0, Medium: 1, Low: 2 };
 const CATS = ["Water", "Electricity", "Wi-Fi", "Food", "Hygiene", "Safety", "Maintenance", "Other"];
+const AREAS = ["bed", "wall", "bathroom", "wardrobe", "floor"];
+const URG = { High: 0, Medium: 1, Low: 2 };
+const STATUS_LABEL = { open: "Open", in_progress: "In progress", fixed: "Fixed" };
+const rupee = (n) => "₹" + Math.round(Number(n) || 0).toLocaleString("en-IN");
+const daysSince = (a, b = Date.now()) => Math.max(0, Math.floor((new Date(b) - new Date(a)) / DAY));
+const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const fmtStamp = (d) => new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+const cap = (s) => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
 
-/* ---------------- state ---------------- */
-let profile = JSON.parse(localStorage.getItem("ff_profile") || "null");
-let wardenCode = sessionStorage.getItem("ff_warden") || null;
-let lastAnalysis = null;
-let pendingAfterProfile = null;
+/* ================= state ================= */
+const S = {
+  mode: null, // "live" | "demo"
+  user: null, profile: null, tenancy: null,
+  photos: [], complaints: [], deductions: [], notices: {},
+  area: "wall", screen: "dashboard", analysis: null, cPhoto: null,
+};
 
-/* ---------------- utils ---------------- */
-function toast(msg) {
+/* ================= ui utils ================= */
+function toast(msg, err = false) {
   const t = $("#toast");
   t.textContent = msg;
+  t.classList.toggle("err", err);
   t.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.classList.remove("show"), 2600);
+  toast._t = setTimeout(() => t.classList.remove("show"), 2800);
 }
 function busy(btn, on, label) {
-  if (on) { btn.dataset.label = btn.textContent; btn.textContent = label || "Working…"; btn.classList.add("loading"); }
-  else { btn.textContent = btn.dataset.label || btn.textContent; btn.classList.remove("loading"); }
+  if (!btn) return;
+  if (on) { btn.dataset.label = btn.innerHTML; btn.textContent = label || "Working…"; btn.classList.add("loading"); btn.disabled = true; }
+  else { btn.innerHTML = btn.dataset.label || btn.innerHTML; btn.classList.remove("loading"); btn.disabled = false; }
 }
-const daysBetween = (a, b = Date.now()) => Math.max(0, Math.floor((new Date(b) - new Date(a)) / DAY));
-const fmtDate = (d) => new Date(d).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
-
 async function ai(action, payload) {
   const r = await fetch(CFG.AI_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || "AI unavailable");
   return j;
 }
+function openImg(src) { $("#imgBig").src = src; $("#imgDlg").showModal(); }
+$("#imgClose").addEventListener("click", () => $("#imgDlg").close());
+$("#imgDlg").addEventListener("click", (e) => { if (e.target.id === "imgDlg") $("#imgDlg").close(); });
+document.addEventListener("click", (e) => { const z = e.target.closest("[data-zoom]"); if (z) openImg(z.dataset.zoom); });
 
-/* Offline fallback so the app still works if the AI is down */
-function localAnalyze(text) {
-  const t = text.toLowerCase();
-  const rules = [
-    ["Water", /water|paani|pani|tap|leak|seepage|flush|bathroom|shower|drain/],
-    ["Electricity", /power|light|fan|bijli|current|switch|spark|geyser|socket|ac\b|inverter/],
-    ["Wi-Fi", /wifi|wi-fi|internet|network|router|net\b/],
-    ["Food", /food|khana|meal|dal|rice|lunch|dinner|breakfast|insect|keede|mess/],
-    ["Hygiene", /dirty|clean|garbage|smell|cockroach|rat|mosquito|dust|toilet/],
-    ["Safety", /lock|door|security|guard|cctv|unsafe|theft|stolen|fire/],
-    ["Maintenance", /broken|crack|bed|chair|table|window|paint|cupboard/],
-  ];
-  const category = (rules.find(([, re]) => re.test(t)) || ["Other"])[0];
-  const urgency = /spark|fire|no water|paani nahi|pani nahi|insect|keede|unsafe|theft|lock|no power|bijli nahi/.test(t) ? "High" : /wifi|wi-fi|food|khana|broken|geyser|internet/.test(t) ? "Medium" : "Low";
-  const title = text.split(/[.!?\n]/)[0].slice(0, 60);
-  const who = profile ? `${profile.name}, Room ${profile.room}` : "Resident";
-  return {
-    category, urgency, title: title.charAt(0).toUpperCase() + title.slice(1), summary: text.slice(0, 140),
-    draft: `Dear Warden,\n\nI would like to report a ${category.toLowerCase()} issue: ${text.trim()}\n\nThis is affecting my daily routine. I request you to look into it and get it fixed at the earliest, ideally within 24–48 hours. Please let me know once it has been addressed.\n\nThank you,\n${who}`,
-    offline: true,
-  };
+/** Shrink a photo to <=1280px JPEG: keeps uploads and AI calls small. */
+function compress(file, max = 1280) {
+  return new Promise((res, rej) => {
+    if (!file || !/^image\//.test(file.type)) return rej(new Error("Please choose an image file."));
+    if (file.size > 15 * 1024 * 1024) return rej(new Error("Image is too large."));
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const dataUrl = c.toDataURL("image/jpeg", 0.82);
+      c.toBlob((blob) => res({ blob, dataUrl }), "image/jpeg", 0.82);
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => rej(new Error("Could not read that image."));
+    img.src = URL.createObjectURL(file);
+  });
 }
 
-/* ---------------- tabs + nav ---------------- */
-function showTab(name) {
-  $$(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-  $$(".pill").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-  $$(".panel").forEach((p) => p.classList.toggle("active", p.id === `panel-${name}`));
-  if (name === "track") loadMine();
-  if (name === "warden") initWarden();
-  if (name === "movein") loadMovein();
-  if (name === "deposit" && !$("#dRows").children.length) seedDeductions();
-}
-$$(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
-$$("a[data-tab]").forEach((a) => a.addEventListener("click", () => showTab(a.dataset.tab)));
-
-/* ---------------- hero scroll ---------------- */
+/* ================= hero ================= */
 const hero = $(".hero");
 const nav = $("#nav");
 function onScroll() {
@@ -86,372 +83,759 @@ addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", onScroll);
 onScroll();
 
-/* ---------------- profile ---------------- */
-function renderProfile() {
-  const chip = $("#profileChip");
-  if (profile) { chip.textContent = `${profile.name} · Room ${profile.room} · ${profile.code}`; chip.classList.add("set"); }
-  else { chip.textContent = "Join your PG"; chip.classList.remove("set"); }
-}
-function openProfile(after) {
-  pendingAfterProfile = after || null;
-  if (profile) { $("#pName").value = profile.name; $("#pRoom").value = profile.room; $("#pCode").value = profile.code; }
-  $("#pErr").textContent = "";
-  $("#profileDlg").showModal();
-}
-$("#profileChip").addEventListener("click", () => openProfile());
-$("#profileForm").addEventListener("submit", async (e) => {
-  if (e.submitter?.value !== "save") { pendingAfterProfile = null; return; }
-  e.preventDefault();
-  const name = $("#pName").value.trim(), room = $("#pRoom").value.trim(), code = $("#pCode").value.trim().toUpperCase();
-  if (!name || !room || !code) return ($("#pErr").textContent = "Fill all fields.");
-  const { data, error } = await db.from("ff_pgs").select("code,name").eq("code", code).maybeSingle();
-  if (error || !data) return ($("#pErr").textContent = "PG code not found. Try SUNRISE24.");
-  profile = { name, room, code, pgName: data.name };
-  localStorage.setItem("ff_profile", JSON.stringify(profile));
-  renderProfile();
-  $("#profileDlg").close();
-  toast(`Joined ${data.name}`);
-  loadHeroStats();
-  const fn = pendingAfterProfile; pendingAfterProfile = null;
-  if (fn) fn();
-});
-const needProfile = (fn) => (profile ? fn() : openProfile(fn));
-
-/* ---------------- hero stats ---------------- */
 async function loadHeroStats() {
-  const code = profile?.code || "SUNRISE24";
-  const { data } = await db.from("ff_complaints").select("status,created_at,fixed_at").eq("pg_code", code);
-  if (!data) return;
-  const fixed = data.filter((c) => c.status === "Fixed");
-  $("#statOpen").textContent = data.length - fixed.length;
-  $("#statFixed").textContent = fixed.length;
-  const avg = fixed.length ? fixed.reduce((s, c) => s + (new Date(c.fixed_at) - new Date(c.created_at)) / DAY, 0) / fixed.length : 0;
-  $("#statAvg").textContent = avg.toFixed(1);
+  const { data } = await db.rpc("ff_stats");
+  const s = data?.[0];
+  if (!s) return;
+  $("#statOpen").textContent = s.open_count;
+  $("#statFixed").textContent = s.fixed_count;
+  $("#statAvg").textContent = s.avg_days ?? "–";
 }
 
-/* ---------------- report ---------------- */
-$$("#examples .chip").forEach((c) => c.addEventListener("click", () => { $("#issueText").value = c.textContent; $("#issueText").focus(); }));
-
-// voice input (Web Speech API)
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null;
-$("#micBtn").addEventListener("click", () => {
-  if (!SR) return toast("Voice input isn't supported in this browser. Try Chrome.");
-  if (rec) { rec.stop(); return; }
-  rec = new SR();
-  rec.lang = "en-IN"; rec.interimResults = true; rec.continuous = false;
-  const base = $("#issueText").value ? $("#issueText").value + " " : "";
-  rec.onresult = (e) => { $("#issueText").value = base + [...e.results].map((r) => r[0].transcript).join(" "); };
-  rec.onend = () => { $("#micBtn").classList.remove("rec"); rec = null; };
-  rec.onerror = (e) => toast(e.error === "not-allowed" ? "Microphone permission denied" : "Couldn't hear that, try again");
-  $("#micBtn").classList.add("rec");
-  rec.start();
-});
-
-$("#analyzeBtn").addEventListener("click", async () => {
-  const text = $("#issueText").value.trim();
-  if (text.length < 5) return toast("Describe the issue in a few words first");
-  const btn = $("#analyzeBtn");
-  busy(btn, true, "Analysing…");
-  try {
-    lastAnalysis = await ai("analyze", { text, resident: profile?.name, room: profile?.room, pg: profile?.pgName });
-  } catch {
-    lastAnalysis = localAnalyze(text);
-  }
-  lastAnalysis.text = text;
-  busy(btn, false);
-  renderAnalysis();
-});
-
-async function renderAnalysis() {
-  const a = lastAnalysis;
-  $("#resultEmpty").hidden = true;
-  $("#resultBody").hidden = false;
-  $("#rCategory").textContent = a.category;
-  $("#rUrgency").textContent = `${a.urgency} urgency`;
-  $("#rUrgency").className = `badge ${a.urgency}`;
-  $("#rTitle").textContent = a.title;
-  $("#rSummary").textContent = a.offline ? `${a.summary} (offline mode: AI unavailable)` : a.summary;
-  $("#rDraft").value = a.draft;
-  // duplicate detection: open complaints in the same PG + category in the last 3 days
-  const box = $("#dupeBox");
-  box.hidden = true;
-  const code = profile?.code || "SUNRISE24";
-  const { data } = await db.from("ff_complaints").select("id,title,room,supporters,created_at").eq("pg_code", code).eq("category", a.category).neq("status", "Fixed").gte("created_at", new Date(Date.now() - 3 * DAY).toISOString()).order("created_at", { ascending: false }).limit(1);
-  if (data?.length && profile && data[0].room !== profile.room) {
-    const d = data[0];
-    box.innerHTML = `<b>${d.supporters} resident${d.supporters > 1 ? "s" : ""} already reported a ${esc(a.category)} issue:</b> "${esc(d.title)}". Add your support to push its priority, or submit yours separately.<div class="row"><button class="btn small primary" id="supportBtn" type="button">Add my support</button></div>`;
-    box.hidden = false;
-    $("#supportBtn").onclick = () => needProfile(async () => {
-      const { error } = await db.from("ff_complaints").update({ supporters: d.supporters + 1 }).eq("id", d.id);
-      if (error) return toast("Couldn't add support");
-      box.innerHTML = "✓ Your support was added. The warden sees this as a group complaint.";
-      toast("Support added");
-    });
-  }
+/* ================= offline fallbacks ================= */
+function localAnalyze(text) {
+  const t = text.toLowerCase();
+  const rules = [
+    ["Water", /water|paani|pani|tap|leak|seepage|flush|shower|drain|geyser|hot water/],
+    ["Electricity", /power|light|fan|bijli|current|switch|spark|socket|\bac\b|inverter/],
+    ["Wi-Fi", /wifi|wi-fi|internet|network|router/],
+    ["Food", /food|khana|meal|dal|rice|lunch|dinner|breakfast|insect|keede|mess/],
+    ["Hygiene", /dirty|clean|garbage|smell|cockroach|rat|mosquito|dust|toilet/],
+    ["Safety", /lock|door|security|guard|cctv|unsafe|theft|stolen|fire/],
+    ["Maintenance", /broken|crack|bed|chair|table|window|paint|cupboard|wardrobe/],
+  ];
+  const category = (rules.find(([, re]) => re.test(t)) || ["Other"])[0];
+  const urgency = /spark|fire|no water|paani nahi|pani nahi|insect|keede|unsafe|theft|lock|no power|bijli nahi/.test(t) ? "High" : /wifi|wi-fi|food|khana|broken|geyser|internet|hot water/.test(t) ? "Medium" : "Low";
+  const title = cap(text.split(/[.!?\n]/)[0].slice(0, 60));
+  return {
+    category, urgency, title, summary: text.slice(0, 140), offline: true,
+    draft: `Dear ${S.tenancy?.owner_name || "Sir/Madam"},\n\nI would like to report a ${category.toLowerCase()} issue in Room ${S.tenancy?.room || ""}: ${text.trim()}\n\nPlease get this fixed within 24–48 hours and let me know once it is done.\n\nThank you,\n${S.profile?.name || "Resident"}`,
+  };
 }
-
-$("#copyDraft").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("#rDraft").value); toast("Complaint copied"); } catch { toast("Copy failed"); }
-});
-
-$("#submitBtn").addEventListener("click", () => needProfile(async () => {
-  const a = lastAnalysis;
-  if (!a) return;
-  const btn = $("#submitBtn");
-  busy(btn, true, "Submitting…");
-  const { error } = await db.from("ff_complaints").insert({
-    pg_code: profile.code, resident_name: profile.name, room: profile.room,
-    text: a.text, title: a.title, summary: a.summary, draft: $("#rDraft").value,
-    category: a.category, urgency: a.urgency,
-  });
-  busy(btn, false);
-  if (error) return toast("Couldn't submit: " + error.message);
-  toast("Sent to your warden");
-  $("#issueText").value = "";
-  $("#resultBody").hidden = true; $("#resultEmpty").hidden = false;
-  lastAnalysis = null;
-  loadHeroStats();
-  showTab("track");
-}));
-
-/* ---------------- my complaints ---------------- */
-function statCards(list) {
-  return list.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
-}
-function stageOf(c) { return c.status === "Fixed" ? 4 : c.status === "In progress" ? 3 : c.seen_at ? 2 : 1; }
-
-async function loadMine() {
-  const list = $("#myList");
-  if (!profile) {
-    $("#myStats").innerHTML = "";
-    list.innerHTML = `<div class="card empty"><div class="empty-icon">☰</div><p>Join your PG to see your complaints.</p><p><button class="btn primary" id="joinBtn" type="button">Join your PG</button></p></div>`;
-    $("#joinBtn").onclick = () => openProfile(loadMine);
-    return;
-  }
-  list.innerHTML = `<p class="muted">Loading…</p>`;
-  const { data, error } = await db.from("ff_complaints").select("*").eq("pg_code", profile.code).eq("resident_name", profile.name).eq("room", profile.room).order("created_at", { ascending: false });
-  if (error) return (list.innerHTML = `<p class="error">${esc(error.message)}</p>`);
-  const open = data.filter((c) => c.status !== "Fixed");
-  const oldest = open.length ? Math.max(...open.map((c) => daysBetween(c.created_at))) : 0;
-  const fixed = data.filter((c) => c.status === "Fixed");
-  const avg = fixed.length ? (fixed.reduce((s, c) => s + (new Date(c.fixed_at) - new Date(c.created_at)) / DAY, 0) / fixed.length).toFixed(1) : "–";
-  $("#myStats").innerHTML = statCards([[open.length, "Open complaints"], [fixed.length, "Fixed"], [oldest, "Days, oldest unfixed"], [avg, "Avg. days to fix"]]);
-  if (!data.length) return (list.innerHTML = `<div class="card empty"><div class="empty-icon">✓</div><p>No complaints yet. Hope it stays that way!</p></div>`);
-  list.innerHTML = data.map((c) => {
-    const d = c.status === "Fixed" ? daysBetween(c.created_at, c.fixed_at) : daysBetween(c.created_at);
-    const st = stageOf(c);
-    const nextLevel = Math.min(3, c.escalation_level + 1);
-    const levelName = ["", "WhatsApp reminder", "Formal notice", "Consumer complaint"][nextLevel];
-    return `<article class="item" data-id="${c.id}">
-      <div>
-        <div class="badges"><span class="badge">${esc(c.category)}</span><span class="badge ${c.urgency}">${c.urgency}</span><span class="badge status-${c.status.replace(" ", ".")}">${c.status}</span>${c.supporters > 1 ? `<span class="badge ai">+${c.supporters - 1} residents</span>` : ""}</div>
-        <h4>${esc(c.title)}</h4>
-        <p>${esc(c.text)}</p>
-        ${c.warden_note ? `<p class="meta"><b>Warden:</b> ${esc(c.warden_note)}</p>` : ""}
-        <div class="timeline" title="Raised → Seen → In progress → Fixed">${[1, 2, 3, 4].map((i) => `<i class="${i <= st ? "on" : ""}"></i>`).join("")}</div>
-        <p class="meta">Raised ${fmtDate(c.created_at)}${c.fixed_at ? ` · Fixed ${fmtDate(c.fixed_at)}` : ""}${c.escalation_level ? ` · Escalation level ${c.escalation_level}/3` : ""}</p>
-        <div class="esc-out"></div>
-      </div>
-      <div class="side">
-        <div class="days ${c.status === "Fixed" ? "done" : d >= 3 ? "hot" : ""}"><b>${d}</b><span>${c.status === "Fixed" ? "days to fix" : "days unfixed"}</span></div>
-        ${c.status !== "Fixed" ? `<button class="btn small primary act-esc" data-level="${nextLevel}" type="button">${c.escalation_level >= 3 ? "Regenerate complaint" : "Escalate: " + levelName}</button>
-        <button class="btn small ghost act-fixed" type="button">It's fixed</button>` : ""}
-      </div>
-    </article>`;
-  }).join("");
-
-  $$(".act-esc", list).forEach((b) => b.addEventListener("click", async () => {
-    const id = b.closest(".item").dataset.id;
-    const c = data.find((x) => x.id === id);
-    const level = +b.dataset.level;
-    busy(b, true, "Drafting…");
-    let msg;
-    try { msg = (await ai("escalate", { complaint: c, level, days: daysBetween(c.created_at) })).message; }
-    catch {
-      msg = [
-        `Hi, gentle reminder about my complaint "${c.title}" (Room ${c.room}) raised on ${fmtDate(c.created_at)}. It's still not fixed. Please look into it today. Thanks, ${c.resident_name}`,
-        `To the PG Owner,\n\nThis is a formal notice regarding my complaint "${c.title}" raised on ${fmtDate(c.created_at)}, unresolved for ${daysBetween(c.created_at)} days. I request resolution within 48 hours.\n\n${c.resident_name}, Room ${c.room}`,
-        `Consumer complaint (National Consumer Helpline, 1915 / consumerhelpline.gov.in)\n\nDeficiency in service by PG accommodation: "${c.title}". Reported on ${fmtDate(c.created_at)}, unresolved for ${daysBetween(c.created_at)} days despite reminders.\n\nComplainant: ${c.resident_name}, Room ${c.room}`,
-      ][level - 1];
-    }
-    busy(b, false);
-    await db.from("ff_complaints").update({ escalation_level: level }).eq("id", id);
-    const out = $(".esc-out", b.closest(".item"));
-    out.innerHTML = `<div class="escalation">${esc(msg)}</div><div class="row"><button class="btn small ghost cp" type="button">Copy</button>${level === 1 ? `<a class="btn small ghost" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">Send on WhatsApp</a>` : ""}${level === 3 ? `<a class="btn small ghost" target="_blank" rel="noopener" href="https://consumerhelpline.gov.in/">Open consumer helpline</a>` : ""}</div>`;
-    $(".cp", out).onclick = async () => { await navigator.clipboard.writeText(msg).catch(() => {}); toast("Copied"); };
-    c.escalation_level = level;
-    b.dataset.level = Math.min(3, level + 1);
-    b.textContent = level >= 3 ? "Regenerate complaint" : "Escalate: " + ["", "WhatsApp reminder", "Formal notice", "Consumer complaint"][level + 1];
-    toast(`Escalation level ${level} drafted`);
-  }));
-  $$(".act-fixed", list).forEach((b) => b.addEventListener("click", async () => {
-    const id = b.closest(".item").dataset.id;
-    const { error } = await db.from("ff_complaints").update({ status: "Fixed", fixed_at: new Date().toISOString(), warden_note: "Confirmed fixed by resident" }).eq("id", id);
-    if (error) return toast("Couldn't update");
-    toast("Marked as fixed");
-    loadMine(); loadHeroStats();
-  }));
-}
-
-/* ---------------- warden ---------------- */
-CATS.forEach((c) => $("#fCat").insertAdjacentHTML("beforeend", `<option>${c}</option>`));
-function initWarden() {
-  $("#wardenLock").hidden = !!wardenCode;
-  $("#wardenBody").hidden = !wardenCode;
-  if (wardenCode) loadWarden();
-}
-$("#wLogin").addEventListener("click", async () => {
-  const code = $("#wCode").value.trim().toUpperCase(), pin = $("#wPin").value.trim();
-  const { data, error } = await db.rpc("ff_check_pin", { p_code: code, p_pin: pin });
-  if (error || !data) return ($("#wErr").textContent = "Wrong PG code or PIN.");
-  $("#wErr").textContent = "";
-  wardenCode = code;
-  sessionStorage.setItem("ff_warden", code);
-  initWarden();
-});
-$("#fCat").addEventListener("change", loadWarden);
-$("#fStatus").addEventListener("change", loadWarden);
-$("#wRefresh").addEventListener("click", loadWarden);
-
-async function loadWarden() {
-  const { data, error } = await db.from("ff_complaints").select("*").eq("pg_code", wardenCode);
-  if (error) return toast(error.message);
-  const active = data.filter((c) => c.status !== "Fixed");
-  const weekFixed = data.filter((c) => c.status === "Fixed" && Date.now() - new Date(c.fixed_at) < 7 * DAY);
-  const fixed = data.filter((c) => c.status === "Fixed");
-  const avg = fixed.length ? (fixed.reduce((s, c) => s + (new Date(c.fixed_at) - new Date(c.created_at)) / DAY, 0) / fixed.length).toFixed(1) : "–";
-  $("#wStats").innerHTML = statCards([[active.filter((c) => c.urgency === "High").length, "High urgency open"], [active.length, "Open + in progress"], [weekFixed.length, "Fixed this week"], [avg, "Avg. days to fix"]]);
-  // category chart (active)
-  const counts = CATS.map((c) => [c, active.filter((x) => x.category === c).length]).filter(([, n]) => n);
-  const max = Math.max(1, ...counts.map(([, n]) => n));
-  $("#wChart").innerHTML = `<b style="font-size:13px">Open issues by category</b>` + (counts.length ? counts.map(([c, n]) => `<div class="bar"><span>${c}</span><div style="width:${(n / max) * 100}%"></div><b>${n}</b></div>`).join("") : `<p class="muted">Nothing open. Nice work!</p>`);
-  // list
-  const fc = $("#fCat").value, fs = $("#fStatus").value;
-  let rows = data.filter((c) => (!fc || c.category === fc) && (fs === "" ? true : fs === "active" ? c.status !== "Fixed" : c.status === fs));
-  rows.sort((a, b) => (a.status === "Fixed") - (b.status === "Fixed") || URG_RANK[a.urgency] - URG_RANK[b.urgency] || b.supporters - a.supporters || new Date(a.created_at) - new Date(b.created_at));
-  $("#wList").innerHTML = rows.length ? rows.map((c) => {
-    const d = c.status === "Fixed" ? daysBetween(c.created_at, c.fixed_at) : daysBetween(c.created_at);
-    return `<article class="item" data-id="${c.id}">
-      <div>
-        <div class="badges"><span class="badge">${esc(c.category)}</span><span class="badge ${c.urgency}">${c.urgency}</span><span class="badge status-${c.status.replace(" ", ".")}">${c.status}</span>${c.supporters > 1 ? `<span class="badge ai">Group · ${c.supporters} residents</span>` : ""}${c.escalation_level ? `<span class="badge High">Escalated L${c.escalation_level}</span>` : ""}</div>
-        <h4>${esc(c.title)}</h4>
-        <p>${esc(c.text)}</p>
-        <p class="meta">${esc(c.resident_name)} · Room ${esc(c.room)} · ${fmtDate(c.created_at)}${c.warden_note ? ` · Note: ${esc(c.warden_note)}` : ""}</p>
-      </div>
-      <div class="side">
-        <div class="days ${c.status === "Fixed" ? "done" : d >= 3 ? "hot" : ""}"><b>${d}</b><span>${c.status === "Fixed" ? "days to fix" : "days open"}</span></div>
-        ${c.status === "Open" ? `<button class="btn small ghost w-prog" type="button">Start work</button>` : ""}
-        ${c.status !== "Fixed" ? `<button class="btn small primary w-fix" type="button">Mark fixed</button>` : ""}
-      </div>
-    </article>`;
-  }).join("") : `<div class="card empty"><p>No complaints match.</p></div>`;
-  $$(".w-prog").forEach((b) => b.addEventListener("click", async () => {
-    const id = b.closest(".item").dataset.id;
-    const note = prompt("Note for the resident (optional)", "Technician assigned") || null;
-    await db.from("ff_complaints").update({ status: "In progress", seen_at: new Date().toISOString(), warden_note: note }).eq("id", id);
-    toast("Marked in progress"); loadWarden(); loadHeroStats();
-  }));
-  $$(".w-fix").forEach((b) => b.addEventListener("click", async () => {
-    const id = b.closest(".item").dataset.id;
-    const note = prompt("What was done? (optional)", "Issue resolved") || null;
-    await db.from("ff_complaints").update({ status: "Fixed", fixed_at: new Date().toISOString(), seen_at: new Date().toISOString(), warden_note: note }).eq("id", id);
-    toast("Marked fixed"); loadWarden(); loadHeroStats();
-  }));
-}
-
-/* ---------------- move-in ---------------- */
-let mImage = null;
-$("#mFile").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  mImage = await shrink(f, 900, 0.72);
-  $("#mPreview").src = mImage; $("#mPreview").hidden = false; $("#dropText").hidden = true;
-  $("#mScan").disabled = false;
-});
-function shrink(file, maxW, q) {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    img.onload = () => {
-      const s = Math.min(1, maxW / img.width);
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      res(c.toDataURL("image/jpeg", q));
-    };
-    img.onerror = rej;
-    img.src = URL.createObjectURL(file);
+function localAudit(deds) {
+  return deds.map((d) => {
+    const r = d.reason.toLowerCase();
+    const hit = S.photos.find((p) => p.locked && (r.includes(p.area) || p.ai_tags.some((t) => t.split(" ").some((w) => w.length > 3 && r.includes(w)))));
+    if (hit) return { id: d.id, verdict: "unfair", reason: `Your locked ${hit.area} photo from ${fmtDate(hit.captured_at)} already shows: ${hit.ai_tags.join(", ") || "this area"}.`, matchedPhotoId: hit.id };
+    if (/clean|sanit/.test(r) && d.amount <= 2500) return { id: d.id, verdict: "fair", reason: "A modest, itemised cleaning charge is usually reasonable if it was agreed at move-in." };
+    return { id: d.id, verdict: "unclear", reason: "No specific damage is identified. Ask the owner for an itemised bill or photo." };
   });
 }
-$("#mScan").addEventListener("click", () => needProfile(async () => {
-  const btn = $("#mScan"), area = $("#mArea").value;
-  busy(btn, true, "Scanning…");
-  let r;
-  try { r = await ai("inspect", { image: mImage, area }); }
-  catch { r = { issues: [], summary: "AI check unavailable. Photo saved with timestamp as evidence." }; }
-  const { error } = await db.from("ff_movein").insert({ pg_code: profile.code, resident_name: profile.name, room: profile.room, area, image: mImage, issues: r.issues || [], summary: r.summary });
-  busy(btn, false);
-  if (error) return toast("Couldn't save: " + error.message);
-  toast("Photo locked with timestamp");
-  mImage = null; $("#mFile").value = ""; $("#mPreview").hidden = true; $("#dropText").hidden = false; btn.disabled = true;
-  loadMovein();
-}));
-async function loadMovein() {
-  const g = $("#mGallery");
-  if (!profile) return (g.innerHTML = `<p class="muted">Join your PG to start your move-in record.</p>`);
-  const { data, error } = await db.from("ff_movein").select("*").eq("pg_code", profile.code).eq("resident_name", profile.name).eq("room", profile.room).order("created_at", { ascending: false });
-  if (error) return (g.innerHTML = `<p class="error">${esc(error.message)}</p>`);
-  g.innerHTML = data.length ? data.map((m) => `<div class="shot"><img src="${m.image}" alt="${esc(m.area)}" /><div>
-    <h4>${esc(m.area)}</h4><span class="lock">🔒 Locked ${fmtDate(m.created_at)}</span>
-    <p class="muted" style="margin:6px 0 0">${esc(m.summary || "")}</p>
-    ${m.issues?.length ? `<ul>${m.issues.map((i) => `<li><b>${esc(i.item)}</b> · ${esc(i.location)} <span class="badge ${i.severity === "Major" ? "High" : i.severity === "Moderate" ? "Medium" : "Low"}">${esc(i.severity)}</span></li>`).join("")}</ul>` : ""}
-  </div></div>`).join("") : `<p class="muted">No photos yet.</p>`;
+function localNotices(ctx) {
+  const t = S.tenancy, name = S.profile?.name || "Tenant";
+  const owner = t.owner_name || "Sir/Madam";
+  const lines = ctx.disputedList.map((d) => `- ${d.reason}: ${rupee(d.amount)} (${d.ai_verdict})`).join("\n");
+  return {
+    whatsapp: `Hi ${owner}, this is ${name} from Room ${t.room}. I've checked the deductions against my move-in photos, which were timestamped on ${fmtDate(ctx.firstPhoto || t.move_in)}. ${rupee(ctx.disputed)} of the charges are for damage that was already there or isn't itemised. Please refund ${rupee(ctx.disputed)} within 7 days. Happy to share the photos. Thanks!`,
+    formal: `Subject: Request for refund of security deposit – Room ${t.room}, ${t.pg_name}\n\nDear ${owner},\n\nI stayed in Room ${t.room} at ${t.pg_name} from ${fmtDate(t.move_in)}${t.move_out ? ` to ${fmtDate(t.move_out)}` : ""} and paid a security deposit of ${rupee(t.deposit)}.\n\nThe following deductions are disputed:\n${lines}\n\nMy move-in photos were locked with a server timestamp and show this damage was pre-existing. I request a refund of ${rupee(ctx.disputed)} within 7 days of this notice, and itemised bills for any other deduction.\n\nRegards,\n${name}`,
+    grievance: `To: National Consumer Helpline (1915 / consumerhelpline.gov.in)\n\nComplainant: ${name}\nService provider: ${t.pg_name}, ${t.address || "Bengaluru"} (owner: ${owner})\n\nI paid a security deposit of ${rupee(t.deposit)}. At move-out, the PG deducted amounts for damage that my timestamped move-in photos show was pre-existing. Disputed deductions:\n${lines}\n\nRelief sought: refund of ${rupee(ctx.disputed)}.`,
+  };
 }
 
-/* ---------------- deposit ---------------- */
-function addDeduction(label = "", amount = "") {
-  $("#dRows").insertAdjacentHTML("beforeend", `<div class="drow"><input placeholder="e.g. Wall repainting" value="${esc(label)}" /><input type="number" placeholder="₹" value="${esc(amount)}" /><button type="button" aria-label="Remove">✕</button></div>`);
-  const row = $("#dRows").lastElementChild;
-  $("button", row).onclick = () => row.remove();
+/* ================= demo data ================= */
+function demoData() {
+  const now = Date.now(), t0 = now - 94 * DAY;
+  return {
+    profile: { name: "Riya Sharma", phone: "+91 98801 44510", city: "Bengaluru" },
+    tenancy: { id: "demo", pg_code: "SUNRISE24", pg_name: "Sunrise PG", owner_name: "Mahesh Gowda", owner_phone: "+91 98450 11223", address: "18th Main, 4th Block, Koramangala, Bengaluru 560034", room: "Room 204", monthly_rent: 11500, deposit: 20000, move_in: new Date(t0).toISOString().slice(0, 10), move_out: new Date(now).toISOString().slice(0, 10) },
+    photos: [
+      { id: "p-wall", area: "wall", photo_url: "img/demo/wall.webp", ai_tags: ["water stain", "peeling plaster", "dark scuff mark"], ai_summary: "Pre-existing grey damp stain, a peeling plaster patch and dark scuff marks beside the switchboard.", captured_at: new Date(t0 + 2 * 36e5).toISOString(), locked: true },
+      { id: "p-bath", area: "bathroom", photo_url: "img/demo/bathroom.webp", ai_tags: ["hard water scaling", "loose faucet", "tile stain"], ai_summary: "Hard-water calcium deposits on the wall tiles and a slightly tilted basin tap.", captured_at: new Date(t0 + 2 * 36e5 + 18e4).toISOString(), locked: true },
+      { id: "p-ward", area: "wardrobe", photo_url: "img/demo/wardrobe.webp", ai_tags: ["loose hinge", "peeling laminate"], ai_summary: "Top door hinge is loose and the bottom laminate edge is peeling.", captured_at: new Date(t0 + 2 * 36e5 + 36e4).toISOString(), locked: true },
+    ],
+    complaints: [
+      { id: "c-wifi", category: "Wi-Fi", urgency: "Medium", title: "Wi-Fi drops every evening", description: "2nd floor router disconnects every evening between 7 PM and 11 PM; reported on the WhatsApp group twice.", draft: "", status: "open", supporters: 4, reported_at: new Date(now - 14 * DAY).toISOString() },
+      { id: "c-water", category: "Water", urgency: "High", title: "No hot water in Room 204 bathroom", description: "Solar geyser hot water unavailable; only a lukewarm trickle in the mornings.", draft: "", status: "open", supporters: 2, reported_at: new Date(now - 6 * DAY).toISOString() },
+      { id: "c-food", category: "Food", urgency: "High", title: "Insect found in lunch dal", description: "Insect found in dal served at lunch.", draft: "", status: "fixed", supporters: 1, reported_at: new Date(now - 30 * DAY).toISOString(), fixed_at: new Date(now - 29 * DAY).toISOString() },
+    ],
+    deductions: [
+      { id: "d1", reason: "Wall repainting for damp stain and scuff marks near switchboard", amount: 4500, ai_verdict: "unfair", ai_reason: "Your locked move-in wall photo from check-in day already shows the damp stain, peeling plaster and scuff marks beside the switchboard.", matched_photo_id: "p-wall", created_at: new Date(now - 36e5).toISOString() },
+      { id: "d2", reason: "Standard room & mattress deep cleaning at move-out", amount: 1500, ai_verdict: "fair", ai_reason: "An itemised end-of-stay cleaning fee is reasonable if it was agreed at move-in.", created_at: new Date(now - 3e6).toISOString() },
+      { id: "d3", reason: "General building & corridor maintenance surcharge", amount: 2000, ai_verdict: "unclear", ai_reason: "A vague blanket charge with no specific room damage. Ask for an itemised bill.", created_at: new Date(now - 24e5).toISOString() },
+    ],
+    notices: {},
+  };
 }
-function seedDeductions() { addDeduction("Wall repainting", 3000); addDeduction("Broken bathroom tap", 800); addDeduction("Deep cleaning", 1500); }
-$("#dAdd").addEventListener("click", () => addDeduction());
-$("#dCheck").addEventListener("click", () => needProfile(async () => {
-  const deductions = $$("#dRows .drow").map((r) => ({ label: $$("input", r)[0].value.trim(), amount: +$$("input", r)[1].value || 0 })).filter((d) => d.label && d.amount);
-  if (!deductions.length) return toast("Add at least one deduction");
-  const btn = $("#dCheck");
-  busy(btn, true, "Checking…");
-  const [{ data: mv }, { data: cs }] = await Promise.all([
-    db.from("ff_movein").select("area,issues,created_at").eq("pg_code", profile.code).eq("resident_name", profile.name).eq("room", profile.room),
-    db.from("ff_complaints").select("title,category,status,created_at").eq("pg_code", profile.code).eq("resident_name", profile.name).eq("room", profile.room),
+const demoPgOpen = () => [
+  { id: "x1", title: "Wi-Fi drops every evening", category: "Wi-Fi", urgency: "Medium", supporters: 4 },
+  { id: "x2", title: "Geyser not heating water", category: "Water", urgency: "High", supporters: 2 },
+  { id: "x3", title: "Room door lock is broken", category: "Safety", urgency: "High", supporters: 1 },
+];
+
+/* ================= data layer ================= */
+const live = () => S.mode === "live";
+async function must(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
+
+async function loadLive() {
+  const id = S.user.id;
+  const [profile, tenancy, photos, complaints, deductions, notices] = await Promise.all([
+    must(db.from("ff_profiles").select("*").eq("id", id).maybeSingle()),
+    must(db.from("ff_tenancies").select("*").eq("owner", id).maybeSingle()),
+    must(db.from("ff_photos").select("*").order("captured_at", { ascending: false })),
+    must(db.from("ff_complaints").select("*").eq("owner", id).order("reported_at", { ascending: false })),
+    must(db.from("ff_deductions").select("*").order("created_at", { ascending: true })),
+    must(db.from("ff_notices").select("*")),
   ]);
-  const movein = (mv || []).flatMap((m) => (m.issues || []).map((i) => ({ area: m.area, ...i, recorded: m.created_at?.slice(0, 10) })));
-  const complaints = (cs || []).map((c) => ({ title: c.title, category: c.category, status: c.status, raised: c.created_at.slice(0, 10) }));
-  const deposit = +$("#dAmount").value || 0;
-  let r;
-  try { r = await ai("deposit", { deductions, movein, complaints, resident: profile.name, room: profile.room, deposit }); }
-  catch {
-    const ev = [...movein.map((m) => `${m.item} ${m.area}`), ...complaints.map((c) => `${c.title} ${c.category}`)].join(" ").toLowerCase();
-    const items = deductions.map((d) => {
-      const hit = d.label.toLowerCase().split(/\s+/).some((w) => w.length > 3 && ev.includes(w));
-      return { ...d, verdict: hit ? "Unfair" : /clean|paint/i.test(d.label) ? "Unclear" : "Fair", reason: hit ? "Matches pre-existing damage or a reported issue." : "No matching evidence on record." };
-    });
-    const claim = items.filter((i) => i.verdict === "Unfair").reduce((s, i) => s + i.amount, 0);
-    r = { items, refund_claim: claim, notice: `Dear Owner,\n\nI dispute deductions of ₹${claim} from my deposit of ₹${deposit}. These relate to damage recorded at move-in or issues I reported that were not fixed. My timestamped records are available on FixFlow. Kindly refund this amount within 7 days.\n\n${profile.name}, Room ${profile.room}` };
-  }
-  busy(btn, false);
-  const total = deductions.reduce((s, d) => s + d.amount, 0);
-  // Never trust the model's arithmetic: the claim is the sum of deductions judged unfair.
-  r.items = (r.items || []).map((i, k) => ({ ...i, amount: Number(i.amount) || deductions[k]?.amount || 0 }));
-  r.refund_claim = Math.min(total, r.items.filter((i) => i.verdict === "Unfair").reduce((s, i) => s + i.amount, 0));
-  $("#dResult").innerHTML = `<h3>Verdict</h3><p class="muted">Based on ${movein.length} move-in finding${movein.length === 1 ? "" : "s"} and ${complaints.length} complaint${complaints.length === 1 ? "" : "s"} on record.</p>
-    ${(r.items || []).map((i) => `<div class="verdict"><div>${esc(i.label)} · ₹${Number(i.amount).toLocaleString("en-IN")}<small>${esc(i.reason)}</small></div><span class="v-${i.verdict}">${i.verdict}</span></div>`).join("")}
-    <div class="refund">You can claim back <b>₹${Number(r.refund_claim || 0).toLocaleString("en-IN")}</b> of ₹${total.toLocaleString("en-IN")} deducted.</div>
-    <label class="lbl">Refund notice</label><textarea id="dNotice" rows="9">${esc(r.notice)}</textarea>
-    <div class="row"><button class="btn ghost" id="dCopy" type="button">Copy notice</button></div>`;
-  $("#dCopy").onclick = async () => { await navigator.clipboard.writeText($("#dNotice").value).catch(() => {}); toast("Notice copied"); };
-}));
+  S.profile = profile || { name: S.user.user_metadata?.name || S.user.email.split("@")[0], phone: S.user.user_metadata?.phone || "" };
+  if (!profile) await db.from("ff_profiles").upsert({ id, name: S.profile.name, phone: S.profile.phone || null });
+  S.tenancy = tenancy; S.photos = photos; S.complaints = complaints; S.deductions = deductions;
+  S.notices = Object.fromEntries(notices.map((n) => [n.kind, n.body]));
+}
 
-/* ---------------- boot ---------------- */
-renderProfile();
+const api = {
+  async saveTenancy(t) {
+    if (!live()) { S.tenancy = { ...S.tenancy, ...t }; return; }
+    S.tenancy = await must(db.from("ff_tenancies").upsert({ ...t, owner: S.user.id }, { onConflict: "owner" }).select().single());
+  },
+  async addPhoto(file, area) {
+    const { blob, dataUrl } = await compress(file);
+    let url;
+    if (live()) {
+      const path = `${S.user.id}/${Date.now()}-${area}.jpg`;
+      const up = await db.storage.from("ff-photos").upload(path, blob, { contentType: "image/jpeg" });
+      if (up.error) throw new Error(up.error.message);
+      url = db.storage.from("ff-photos").getPublicUrl(path).data.publicUrl;
+    } else url = URL.createObjectURL(blob);
+    let ins = { tags: [], summary: "AI inspection unavailable right now. The photo is still saved with its timestamp." };
+    try { ins = await ai("inspect", { image: dataUrl, area }); } catch {}
+    const row = { area, photo_url: url, ai_tags: ins.tags || [], ai_summary: ins.summary || "" };
+    if (live()) S.photos.unshift(await must(db.from("ff_photos").insert(row).select().single()));
+    else S.photos.unshift({ ...row, id: uid(), captured_at: new Date().toISOString(), locked: false });
+  },
+  async deletePhoto(id) {
+    if (live()) await must(db.from("ff_photos").delete().eq("id", id));
+    S.photos = S.photos.filter((p) => p.id !== id);
+  },
+  async lockPhotos(ids) {
+    if (live()) {
+      const rows = await must(db.from("ff_photos").update({ locked: true }).in("id", ids).select());
+      rows.forEach((r) => { const i = S.photos.findIndex((p) => p.id === r.id); if (i > -1) S.photos[i] = r; });
+    } else S.photos.forEach((p) => { if (ids.includes(p.id)) { p.locked = true; p.locked_at = new Date().toISOString(); } });
+  },
+  async addComplaint(c) {
+    const row = { ...c, resident_name: S.profile.name, room: S.tenancy.room, pg_code: S.tenancy.pg_code || null };
+    if (live()) S.complaints.unshift(await must(db.from("ff_complaints").insert(row).select().single()));
+    else S.complaints.unshift({ ...row, id: uid(), status: "open", supporters: 1, reported_at: new Date().toISOString() });
+  },
+  async setComplaintStatus(id, status) {
+    if (live()) {
+      const r = await must(db.from("ff_complaints").update({ status }).eq("id", id).select().single());
+      S.complaints = S.complaints.map((c) => (c.id === id ? r : c));
+    } else S.complaints = S.complaints.map((c) => (c.id === id ? { ...c, status, fixed_at: status === "fixed" ? new Date().toISOString() : null } : c));
+  },
+  async pgOpen() {
+    if (!live()) return demoPgOpen();
+    if (!S.tenancy?.pg_code) return [];
+    const { data } = await db.rpc("ff_pg_open", { p_code: S.tenancy.pg_code });
+    return data || [];
+  },
+  async support(id) {
+    if (!live()) return 0;
+    const { data, error } = await db.rpc("ff_support", { p_id: id });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+  async addDeduction(d) {
+    if (live()) { const r = await must(db.from("ff_deductions").insert(d).select().single()); S.deductions.push(r); return r; }
+    const r = { ...d, id: uid(), created_at: new Date().toISOString() }; S.deductions.push(r); return r;
+  },
+  async updateDeduction(id, patch) {
+    if (live()) await must(db.from("ff_deductions").update(patch).eq("id", id));
+    S.deductions = S.deductions.map((d) => (d.id === id ? { ...d, ...patch } : d));
+  },
+  async deleteDeduction(id) {
+    if (live()) await must(db.from("ff_deductions").delete().eq("id", id));
+    S.deductions = S.deductions.filter((d) => d.id !== id);
+  },
+  async saveNotices(obj) {
+    if (live()) await must(db.from("ff_notices").upsert(Object.entries(obj).map(([kind, body]) => ({ owner: S.user.id, kind, body, updated_at: new Date().toISOString() })), { onConflict: "owner,kind" }));
+    S.notices = { ...S.notices, ...obj };
+  },
+};
+
+/* ================= views / routing ================= */
+function showView() {
+  const inApp = !!S.mode;
+  $("#authView").hidden = inApp;
+  $("#appView").hidden = !inApp;
+  $("#demoBar").hidden = S.mode !== "demo";
+  $("#navCta").textContent = S.mode === "live" ? "My dashboard" : S.mode === "demo" ? "Sign up free" : "Get started";
+  $("#signOutBtn").textContent = S.mode === "demo" ? "Exit demo" : "Log out";
+  if (inApp) {
+    if (!S.tenancy) return go("setup");
+    go(S.screen === "setup" ? "dashboard" : S.screen);
+  }
+}
+function go(screen) {
+  S.screen = screen;
+  const noPg = !S.tenancy;
+  $$(".nav-item").forEach((b) => { b.classList.toggle("active", b.dataset.screen === screen); b.disabled = noPg; });
+  $$(".screen").forEach((s) => s.classList.toggle("active", s.id === `s-${screen}`));
+  $("#sidePg").textContent = S.tenancy?.pg_name || "Your PG";
+  $("#sideRoom").textContent = S.tenancy ? `${S.tenancy.room} · ${rupee(S.tenancy.deposit)} deposit` : "Add your PG to start";
+  ({ setup: renderSetup, dashboard: renderDashboard, scan: renderScan, complaints: renderComplaints, claim: renderClaim, notices: renderNotices })[screen]?.();
+}
+$$(".nav-item").forEach((b) => b.addEventListener("click", () => { go(b.dataset.screen); $("#app").scrollIntoView({ behavior: "smooth" }); }));
+
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("[data-go]");
+  if (!a) return;
+  e.preventDefault();
+  if (a.dataset.go === "demo") startDemo();
+  else if (S.mode === "demo") { exitDemo(); setAuthMode("signup"); }
+  showView();
+  $("#app").scrollIntoView({ behavior: "smooth" });
+});
+
+function startDemo() {
+  Object.assign(S, { mode: "demo", user: null, screen: "dashboard", analysis: null }, demoData());
+  sessionStorage.setItem("ff_demo", "1");
+  showView();
+  toast("Demo loaded: Riya's Room 204");
+}
+function exitDemo() {
+  sessionStorage.removeItem("ff_demo");
+  Object.assign(S, { mode: null, profile: null, tenancy: null, photos: [], complaints: [], deductions: [], notices: {}, screen: "dashboard" });
+}
+$("#signOutBtn").addEventListener("click", async () => {
+  if (S.mode === "demo") { exitDemo(); showView(); return; }
+  await db.auth.signOut();
+});
+$("#editPgBtn").addEventListener("click", () => go("setup"));
+
+/* ================= auth ================= */
+let authMode = "signup";
+function setAuthMode(m) {
+  authMode = m;
+  $("#authView").classList.toggle("login", m === "login");
+  $$(".seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.auth === m));
+  $("#aSubmit").textContent = m === "signup" ? "Create account & continue" : "Log in";
+  $("#aPass").autocomplete = m === "signup" ? "new-password" : "current-password";
+  $("#aErr").textContent = "";
+}
+$$(".seg-btn").forEach((b) => b.addEventListener("click", () => setAuthMode(b.dataset.auth)));
+$("#authForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("#aEmail").value.trim(), password = $("#aPass").value, name = $("#aName").value.trim(), phone = $("#aPhone").value.trim();
+  const err = (m) => ($("#aErr").textContent = m);
+  if (authMode === "signup" && name.length < 2) return err("Enter your full name.");
+  if (!/^\S+@\S+\.\S+$/.test(email)) return err("Enter a valid email.");
+  if (password.length < 6) return err("Password needs at least 6 characters.");
+  const btn = $("#aSubmit");
+  busy(btn, true, authMode === "signup" ? "Creating account…" : "Logging in…");
+  try {
+    if (authMode === "signup") {
+      const { data, error } = await db.auth.signUp({ email, password, options: { data: { name, phone } } });
+      if (error) throw error;
+      if (!data.session) { err("Check your inbox to confirm your email, then log in."); return; }
+      await db.from("ff_profiles").upsert({ id: data.user.id, name, phone: phone || null });
+    } else {
+      const { error } = await db.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    }
+  } catch (ex) {
+    err(/registered/i.test(ex.message) ? "This email already has an account. Log in instead." : /invalid login/i.test(ex.message) ? "Wrong email or password." : ex.message);
+  } finally { busy(btn, false); }
+});
+
+async function onSession(session) {
+  if (session?.user) {
+    sessionStorage.removeItem("ff_demo");
+    S.mode = "live"; S.user = session.user;
+    try { await loadLive(); } catch (e) { toast(e.message, true); }
+  } else if (S.mode === "live") {
+    exitDemo(); S.user = null;
+  } else if (sessionStorage.getItem("ff_demo") && !S.mode) {
+    return startDemo();
+  }
+  showView();
+}
+db.auth.onAuthStateChange((evt, session) => {
+  if (evt === "INITIAL_SESSION" || evt === "SIGNED_IN" || evt === "SIGNED_OUT") {
+    if (evt === "SIGNED_IN" && S.mode === "live" && S.user?.id === session?.user?.id) return;
+    // defer: calling Supabase inside this callback can deadlock the auth lock
+    setTimeout(async () => {
+      await onSession(session);
+      if (evt === "SIGNED_IN") toast(`Welcome${S.profile?.name ? ", " + S.profile.name.split(" ")[0] : ""}!`);
+    }, 0);
+  }
+});
+
+/* ================= setup ================= */
+function renderSetup() {
+  const t = S.tenancy;
+  $("#setupTitle").textContent = t ? "PG details" : "Add your PG";
+  $("#pgSave").textContent = t ? "Save PG details" : "Save PG & start move-in scan";
+  $("#pgCancel").hidden = !t;
+  $("#fPg").value = t?.pg_name || ""; $("#fRoom").value = t?.room || ""; $("#fOwner").value = t?.owner_name || "";
+  $("#fOwnerPhone").value = t?.owner_phone || ""; $("#fAddr").value = t?.address || ""; $("#fRent").value = t?.monthly_rent || "";
+  $("#fDep").value = t?.deposit || ""; $("#fIn").value = t?.move_in || ""; $("#fOut").value = t?.move_out || ""; $("#fCode").value = t?.pg_code || "";
+  $("#pgErr").textContent = "";
+}
+$("#pgCancel").addEventListener("click", () => go("dashboard"));
+$("#pgForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = (m) => ($("#pgErr").textContent = m);
+  const t = {
+    pg_name: $("#fPg").value.trim(), room: $("#fRoom").value.trim(), owner_name: $("#fOwner").value.trim() || null,
+    owner_phone: $("#fOwnerPhone").value.trim() || null, address: $("#fAddr").value.trim() || null,
+    monthly_rent: Number($("#fRent").value), deposit: Number($("#fDep").value),
+    move_in: $("#fIn").value, move_out: $("#fOut").value || null, pg_code: $("#fCode").value.trim().toUpperCase() || null,
+  };
+  if (t.pg_name.length < 2) return err("Enter your PG name.");
+  if (!t.room) return err("Enter your room or bed number.");
+  if (!(t.monthly_rent > 0 && t.monthly_rent < 1e6)) return err("Enter a valid monthly rent.");
+  if (!(t.deposit > 0 && t.deposit < 5e6)) return err("Enter the security deposit you paid.");
+  if (!t.move_in) return err("Pick your move-in date.");
+  if (t.move_out && t.move_out < t.move_in) return err("Move-out can't be before move-in.");
+  const btn = $("#pgSave");
+  busy(btn, true, "Saving…");
+  try {
+    if (t.pg_code && live()) {
+      const { data } = await db.from("ff_pgs").select("code").eq("code", t.pg_code).maybeSingle();
+      if (!data) { busy(btn, false); return err("That PG code isn't registered. Leave it empty, or try SUNRISE24."); }
+    }
+    const first = !S.tenancy;
+    await api.saveTenancy(t);
+    toast(first ? "PG added! Let's scan your room." : "PG details updated.");
+    go(first ? "scan" : "dashboard");
+  } catch (ex) { err(ex.message); }
+  finally { busy(btn, false); }
+});
+
+/* ================= numbers ================= */
+function money() {
+  const ds = S.deductions;
+  const sum = (v) => ds.filter((d) => d.ai_verdict === v).reduce((s, d) => s + d.amount, 0);
+  const total = ds.reduce((s, d) => s + d.amount, 0);
+  const unfair = sum("unfair"), unclear = sum("unclear"), fair = sum("fair");
+  const deposit = S.tenancy?.deposit || 0;
+  return { total, unfair, unclear, fair, disputed: unfair + unclear, refund: Math.max(0, deposit - fair - ds.filter((d) => !d.ai_verdict).reduce((s, d) => s + d.amount, 0)), deposit };
+}
+
+/* ================= dashboard ================= */
+function renderDashboard() {
+  const t = S.tenancy, m = money();
+  const open = S.complaints.filter((c) => c.status !== "fixed");
+  const locked = S.photos.filter((p) => p.locked);
+  $("#hello").textContent = `Hi ${S.profile?.name?.split(" ")[0] || "there"}, here's your stay at ${t.pg_name}`;
+  $("#dDeposit").textContent = rupee(t.deposit);
+  $("#dDepositSub").textContent = `Rent ${rupee(t.monthly_rent)}/month · since ${fmtDate(t.move_in)}`;
+  $("#dProtected").textContent = rupee(m.unfair);
+  $("#dProtectedSub").textContent = S.deductions.length ? `${S.deductions.filter((d) => d.ai_verdict === "unfair").length} unfair deduction(s) caught` : "No move-out deductions logged";
+  $("#dOpen").textContent = open.length;
+  const longest = open.reduce((mx, c) => Math.max(mx, daysSince(c.reported_at)), 0);
+  $("#dOpenSub").textContent = open.length ? `Longest unfixed: ${longest} day${longest === 1 ? "" : "s"}` : "All logged issues resolved";
+  $("#dPhotos").textContent = `${locked.length} locked`;
+  const covered = new Set(locked.map((p) => p.area));
+  $("#dPhotosSub").textContent = `${covered.size} of ${AREAS.length} areas · ${S.photos.length - locked.length} pending`;
+  const steps = [
+    ["Add your PG details", true, null],
+    ["Scan & lock move-in photos (3+ areas)", covered.size >= 3, "scan"],
+    ["Log issues as they happen", S.complaints.length > 0, "complaints"],
+    ["Add deductions at move-out", S.deductions.length > 0, "claim"],
+    ["Generate your refund notices", Object.keys(S.notices).length > 0, "notices"],
+  ];
+  $("#dSteps").innerHTML = steps.map(([label, done, scr]) => `<li class="${done ? "done" : ""}"><span>${esc(label)}</span>${!done && scr ? `<button class="btn small ghost" data-jump="${scr}">Start</button>` : ""}</li>`).join("");
+  $("#dIssues").innerHTML = open.length
+    ? open.sort((a, b) => new Date(a.reported_at) - new Date(b.reported_at)).slice(0, 4).map((c) => `<div class="mini"><span>${esc(c.title)}</span><b>${daysSince(c.reported_at)}d</b></div>`).join("")
+    : `<div class="empty-list">Nothing open. Nice.</div>`;
+}
+document.addEventListener("click", (e) => { const j = e.target.closest("[data-jump]"); if (j) go(j.dataset.jump); });
+
+/* ================= scan ================= */
+function renderScan() {
+  const counts = Object.fromEntries(AREAS.map((a) => [a, S.photos.filter((p) => p.area === a).length]));
+  $("#areaPick").innerHTML = AREAS.map((a) => `<button type="button" class="area ${a === S.area ? "active" : ""}" data-area="${a}">${cap(a)}${counts[a] ? `<span class="n">${counts[a]}</span>` : ""}</button>`).join("");
+  $("#dropText").textContent = `Capture or upload ${S.area} photo`;
+  const pending = S.photos.filter((p) => !p.locked);
+  const lb = $("#lockBtn");
+  lb.disabled = !pending.length;
+  lb.textContent = pending.length ? `Lock move-in record (${pending.length})` : S.photos.length ? "All photos locked" : "Lock move-in record";
+  $("#photoGrid").innerHTML = S.photos.length ? S.photos.map((p) => `
+    <article class="photo" data-id="${p.id}">
+      <img src="${esc(p.photo_url)}" alt="${esc(p.area)} move-in photo" data-zoom="${esc(p.photo_url)}" loading="lazy" />
+      <div class="pb">
+        <h5>${esc(p.area)} ${p.locked ? `<span class="badge lock">🔒 Locked</span>` : `<span class="badge ghost">Pending lock</span>`}</h5>
+        <div class="tags">${(p.ai_tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("") || `<span class="stamp">No defects tagged</span>`}</div>
+        <p>${esc(p.ai_summary)}</p>
+        <span class="stamp">Captured ${fmtStamp(p.captured_at)}${p.locked_at ? ` · locked ${fmtStamp(p.locked_at)}` : ""}</span>
+        ${p.locked ? "" : `<button type="button" class="link" data-del="${p.id}">Remove before lock</button>`}
+      </div>
+    </article>`).join("") : `<div class="empty-list" style="grid-column:1/-1">No photos yet. Start with the wall: stains and cracks are the most common deduction.</div>`;
+}
+$("#areaPick").addEventListener("click", (e) => { const b = e.target.closest("[data-area]"); if (b) { S.area = b.dataset.area; renderScan(); } });
+async function handlePhoto(file) {
+  if (!file) return;
+  $("#scanErr").textContent = "";
+  if (file.size > 5 * 1024 * 1024) return ($("#scanErr").textContent = "That photo is over 5 MB. Try a smaller one.");
+  const drop = $("#drop");
+  drop.classList.add("busy");
+  $("#dropText").textContent = "Uploading and analysing defects with Gemini…";
+  try { await api.addPhoto(file, S.area); toast("Photo scanned with Gemini."); }
+  catch (ex) { $("#scanErr").textContent = ex.message || "Upload or AI inspection failed."; }
+  finally { drop.classList.remove("busy"); $("#photoInput").value = ""; renderScan(); }
+}
+$("#photoInput").addEventListener("change", (e) => handlePhoto(e.target.files[0]));
+const drop = $("#drop");
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => handlePhoto(e.dataTransfer.files[0]));
+$("#photoGrid").addEventListener("click", async (e) => {
+  const d = e.target.closest("[data-del]");
+  if (!d) return;
+  try { await api.deletePhoto(d.dataset.del); toast("Photo removed."); renderScan(); } catch (ex) { toast(ex.message, true); }
+});
+$("#lockBtn").addEventListener("click", () => {
+  const n = S.photos.filter((p) => !p.locked).length;
+  $("#lockText").textContent = `Locking stamps the server date and time on ${n} photo(s) and makes them permanently read-only. You can still add more areas later, but locked photos can't be changed or deleted, even by you.`;
+  $("#lockDlg").showModal();
+});
+$("#lockCancel").addEventListener("click", () => $("#lockDlg").close());
+$("#lockConfirm").addEventListener("click", async () => {
+  const btn = $("#lockConfirm");
+  busy(btn, true, "Locking…");
+  try { await api.lockPhotos(S.photos.filter((p) => !p.locked).map((p) => p.id)); toast("Move-in record locked with timestamp."); }
+  catch (ex) { toast(ex.message, true); }
+  finally { busy(btn, false); $("#lockDlg").close(); renderScan(); }
+});
+
+/* ================= complaints ================= */
+$("#fCat").innerHTML += CATS.map((c) => `<option>${c}</option>`).join("");
+function renderComplaints() {
+  const open = S.complaints.filter((c) => c.status !== "fixed").length;
+  $("#cCount").textContent = `${open} open issue${open === 1 ? "" : "s"} tracked with live day counters`;
+  const fs = $("#fStatus").value, fc = $("#fCat").value;
+  const list = S.complaints.filter((c) => (!fs || c.status === fs) && (!fc || c.category === fc));
+  const phone = (S.tenancy?.owner_phone || "").replace(/\D/g, "");
+  $("#cList").innerHTML = list.length ? list.map((c) => {
+    const d = daysSince(c.reported_at), fixed = c.status === "fixed";
+    const took = fixed && c.fixed_at ? daysSince(c.reported_at, c.fixed_at) : 0;
+    const msg = c.draft || `Hi ${S.tenancy?.owner_name || ""}, reminder about my complaint "${c.title}" (Room ${S.tenancy?.room}), reported on ${fmtDate(c.reported_at)}. It has been unfixed for ${d} days. Please fix it soon.`;
+    return `<article class="item" data-id="${c.id}">
+      <div>
+        <div class="badges"><span class="badge">${esc(c.category)}</span><span class="badge ${esc(c.urgency)}">${esc(c.urgency)}</span><span class="badge ${esc(c.status)}">${STATUS_LABEL[c.status]}</span>${c.supporters > 1 ? `<span class="badge ghost">+${c.supporters - 1} residents</span>` : ""}</div>
+        <h4>${esc(c.title)}</h4>
+        <p>${esc(c.description)}</p>
+        ${c.photo_url ? `<img class="thumb" src="${esc(c.photo_url)}" alt="Complaint photo" data-zoom="${esc(c.photo_url)}" />` : ""}
+        <div class="meta">Reported ${fmtStamp(c.reported_at)}${c.warden_note ? ` · Warden: ${esc(c.warden_note)}` : ""}</div>
+        <div class="acts">
+          ${fixed ? "" : `<button class="btn small primary" data-fix="${c.id}">Mark fixed</button>`}
+          <button class="btn small ghost" data-copy="${encodeURIComponent(msg)}">Copy message</button>
+          ${phone && !fixed ? `<a class="btn small ghost" target="_blank" rel="noopener noreferrer" href="https://wa.me/${phone}?text=${encodeURIComponent(msg)}">WhatsApp owner</a>` : ""}
+        </div>
+      </div>
+      <div class="days ${fixed ? "done" : d >= 3 ? "hot" : ""}">${fixed ? `<b>Fixed</b><span>on ${fmtDate(c.fixed_at)} · took ${took}d</span>` : `<b>${d}</b><span>day${d === 1 ? "" : "s"} unfixed</span>`}</div>
+    </article>`;
+  }).join("") : `<div class="empty-list">${S.complaints.length ? "No matching complaints. Try clearing the filters." : "No complaints yet. Log the first one above."}</div>`;
+}
+$("#fStatus").addEventListener("change", renderComplaints);
+$("#fCat").addEventListener("change", renderComplaints);
+$("#cExamples").addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (c) { $("#cText").value = c.textContent; $("#cText").focus(); } });
+$("#cPhoto").addEventListener("change", (e) => {
+  S.cPhoto = e.target.files[0] || null;
+  $("#cPhotoLbl").textContent = S.cPhoto ? `📎 ${S.cPhoto.name} (change)` : "📎 Attach photo (optional)";
+});
+$("#cAnalyze").addEventListener("click", async () => {
+  const text = $("#cText").value.trim();
+  $("#cErr").textContent = "";
+  if (text.length < 5) return ($("#cErr").textContent = "Describe the issue in a few words first.");
+  const btn = $("#cAnalyze");
+  busy(btn, true, "Analysing…");
+  let out;
+  try { out = await ai("analyze", { text, resident: S.profile?.name, room: S.tenancy?.room, pg: S.tenancy?.pg_name }); }
+  catch { out = localAnalyze(text); }
+  S.analysis = { ...out, text };
+  $("#cEmpty").hidden = true; $("#cBody").hidden = false;
+  $("#rCat").textContent = out.category;
+  $("#rUrg").textContent = out.urgency; $("#rUrg").className = `badge ${out.urgency}`;
+  $("#rMode").hidden = !out.offline;
+  $("#rTitle").value = out.title; $("#rDraft").value = out.draft;
+  busy(btn, false);
+  // similar open issues in the same PG
+  const box = $("#similar");
+  box.hidden = true;
+  try {
+    const sim = (await api.pgOpen()).filter((x) => x.category === out.category && !S.complaints.some((c) => c.id === x.id));
+    if (sim.length) {
+      box.innerHTML = `<b>Others in your PG reported something similar</b>` + sim.slice(0, 3).map((x) => `<div class="s-row"><span>${esc(x.title)} · ${x.supporters} resident${x.supporters === 1 ? "" : "s"}</span><button class="btn small ghost" data-support="${x.id}">+1 me too</button></div>`).join("");
+      box.hidden = false;
+    }
+  } catch {}
+});
+$("#similar").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-support]");
+  if (!b) return;
+  try { const n = await api.support(b.dataset.support); b.textContent = "Added ✓"; b.disabled = true; toast(n ? `Added your voice: ${n} residents now` : "Added your voice to this complaint"); }
+  catch (ex) { toast(ex.message, true); }
+});
+$("#cDiscard").addEventListener("click", resetComposer);
+function resetComposer() {
+  S.analysis = null; S.cPhoto = null;
+  $("#cText").value = ""; $("#cPhoto").value = ""; $("#cPhotoLbl").textContent = "📎 Attach photo (optional)";
+  $("#cEmpty").hidden = false; $("#cBody").hidden = true; $("#similar").hidden = true;
+}
+$("#cSave").addEventListener("click", async () => {
+  if (!S.analysis) return;
+  const btn = $("#cSave");
+  busy(btn, true, "Saving…");
+  try {
+    let photo_url = null;
+    if (S.cPhoto) {
+      const { blob } = await compress(S.cPhoto);
+      if (live()) {
+        const path = `${S.user.id}/c-${Date.now()}.jpg`;
+        const up = await db.storage.from("ff-photos").upload(path, blob, { contentType: "image/jpeg" });
+        if (up.error) throw new Error(up.error.message);
+        photo_url = db.storage.from("ff-photos").getPublicUrl(path).data.publicUrl;
+      } else photo_url = URL.createObjectURL(blob);
+    }
+    await api.addComplaint({ category: S.analysis.category, urgency: S.analysis.urgency, title: $("#rTitle").value.trim() || S.analysis.title, description: S.analysis.text, draft: $("#rDraft").value, photo_url });
+    toast("Complaint logged. The day counter has started.");
+    resetComposer(); renderComplaints();
+  } catch (ex) { toast(ex.message, true); }
+  finally { busy(btn, false); }
+});
+$("#cList").addEventListener("click", async (e) => {
+  const f = e.target.closest("[data-fix]"), c = e.target.closest("[data-copy]");
+  if (f) {
+    busy(f, true, "Saving…");
+    try { await api.setComplaintStatus(f.dataset.fix, "fixed"); toast("Marked fixed."); renderComplaints(); }
+    catch (ex) { toast(ex.message, true); busy(f, false); }
+  }
+  if (c) {
+    try { await navigator.clipboard.writeText(decodeURIComponent(c.dataset.copy)); toast("Copied."); }
+    catch { toast("Couldn't access the clipboard. Select and copy manually.", true); }
+  }
+});
+
+// voice input
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+$("#micBtn").addEventListener("click", () => {
+  if (!SR) return toast("Voice input isn't supported in this browser. Try Chrome.", true);
+  const mic = $("#micBtn");
+  if (mic._rec) { mic._rec.stop(); return; }
+  const rec = new SR();
+  rec.lang = "en-IN"; rec.interimResults = true;
+  const base = $("#cText").value ? $("#cText").value + " " : "";
+  rec.onresult = (e) => { $("#cText").value = base + [...e.results].map((r) => r[0].transcript).join(""); };
+  rec.onend = () => { mic.classList.remove("rec"); mic._rec = null; };
+  rec.onerror = () => toast("Couldn't hear that. Check mic permission.", true);
+  mic._rec = rec; mic.classList.add("rec"); rec.start();
+});
+
+/* ================= deposit claim ================= */
+function renderClaim() {
+  const m = money();
+  $("#kTotal").textContent = rupee(m.total);
+  $("#kDispute").textContent = rupee(m.disputed);
+  $("#kRefund").textContent = rupee(m.refund);
+  $("#kRefundSub").textContent = `${rupee(m.deposit)} deposit − ${rupee(m.deposit - m.refund)} fair deductions`;
+  $("#auditBtn").disabled = !S.deductions.length;
+  $("#dedList").innerHTML = S.deductions.length ? S.deductions.map((d) => {
+    const ph = S.photos.find((p) => p.id === d.matched_photo_id);
+    const v = d.ai_verdict || "pending";
+    return `<article class="ded ${v}">
+      <div>
+        <h4><span>${esc(d.reason)}</span><span class="amt">${rupee(d.amount)}</span></h4>
+        <span class="verdict ${v}">${v === "unfair" ? "Unfair deduction" : v === "fair" ? "Fair deduction" : v === "unclear" ? "Unclear — needs proof" : "Not audited yet"}</span>
+        <p>${esc(d.ai_reason || "Run the AI audit to check this against your move-in photos.")}</p>
+        <button type="button" class="link" data-ddel="${d.id}">Remove</button>
+      </div>
+      ${ph ? `<div><img src="${esc(ph.photo_url)}" alt="Matched move-in photo" data-zoom="${esc(ph.photo_url)}" /><div class="proof">🔒 ${esc(ph.area)} · ${fmtDate(ph.captured_at)}</div></div>` : `<div class="proof" style="align-self:center">No matching move-in photo</div>`}
+    </article>`;
+  }).join("") : `<div class="empty-list">No move-out deductions yet. Add each charge the owner listed and FixFlow checks it against your locked photos.</div>`;
+}
+async function audit(ids) {
+  const deds = S.deductions.filter((d) => !ids || ids.includes(d.id));
+  if (!deds.length) return;
+  const photos = S.photos.filter((p) => p.locked).map((p) => ({ id: p.id, area: p.area, tags: p.ai_tags, summary: p.ai_summary, capturedAt: p.captured_at }));
+  const complaints = S.complaints.filter((c) => c.status !== "fixed").map((c) => ({ title: c.title, category: c.category, daysUnfixed: daysSince(c.reported_at) }));
+  let results;
+  try { results = (await ai("audit", { deductions: deds.map((d) => ({ id: d.id, reason: d.reason, amount: d.amount })), photos, complaints, deposit: S.tenancy.deposit })).results; }
+  catch { results = localAudit(deds); }
+  for (const d of deds) {
+    const r = results.find((x) => x.id === d.id) || localAudit([d])[0];
+    const verdict = ["fair", "unfair", "unclear"].includes(r.verdict) ? r.verdict : "unclear";
+    const matched = photos.some((p) => p.id === r.matchedPhotoId) ? r.matchedPhotoId : null;
+    await api.updateDeduction(d.id, { ai_verdict: verdict, ai_reason: String(r.reason || ""), matched_photo_id: matched });
+  }
+}
+$("#dedForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const reason = $("#dReason").value.trim(), amount = Math.round(Number($("#dAmount").value));
+  const err = (m) => ($("#dErr").textContent = m);
+  err("");
+  if (reason.length < 4) return err("Describe the deduction as the owner wrote it.");
+  if (!(amount > 0)) return err("Enter the amount deducted.");
+  const btn = $("#dAdd");
+  busy(btn, true, "Auditing…");
+  try {
+    const d = await api.addDeduction({ reason, amount });
+    $("#dReason").value = ""; $("#dAmount").value = "";
+    await audit([d.id]);
+    const v = S.deductions.find((x) => x.id === d.id)?.ai_verdict;
+    toast(v === "unfair" ? "Unfair deduction caught!" : "Deduction audited.");
+  } catch (ex) { err(ex.message); }
+  finally { busy(btn, false); renderClaim(); }
+});
+$("#auditBtn").addEventListener("click", async () => {
+  const btn = $("#auditBtn");
+  busy(btn, true, "Re-auditing…");
+  try { await audit(); toast("All deductions re-audited."); } catch (ex) { toast(ex.message, true); }
+  finally { busy(btn, false); renderClaim(); }
+});
+$("#dedList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-ddel]");
+  if (!b) return;
+  try { await api.deleteDeduction(b.dataset.ddel); toast("Deduction removed."); renderClaim(); } catch (ex) { toast(ex.message, true); }
+});
+
+/* ================= notices ================= */
+const KINDS = [
+  ["whatsapp", "WhatsApp reminder", "Friendly, firm, 7-day ask"],
+  ["formal", "Formal notice", "Dated, itemised, for email or print"],
+  ["grievance", "Consumer helpline draft", "National Consumer Helpline (1915)"],
+];
+function noticeCtx() {
+  const m = money();
+  return {
+    disputed: m.disputed,
+    disputedList: S.deductions.filter((d) => d.ai_verdict === "unfair" || d.ai_verdict === "unclear"),
+    firstPhoto: S.photos.filter((p) => p.locked).map((p) => p.captured_at).sort()[0],
+  };
+}
+function renderNotices() {
+  const ctx = noticeCtx();
+  const has = Object.keys(S.notices).length > 0;
+  $("#nContext").textContent = ctx.disputed
+    ? `You're disputing ${rupee(ctx.disputed)} across ${ctx.disputedList.length} deduction(s), backed by ${S.photos.filter((p) => p.locked).length} locked photo(s) and ${S.complaints.filter((c) => c.status !== "fixed").length} unfixed complaint(s).`
+    : "Add and audit deductions on the Deposit claim screen first. The notices quote that evidence.";
+  $("#genBtn").textContent = has ? "Regenerate all 3" : "Generate 3 drafts";
+  $("#pdfBtn").disabled = !has;
+  const phone = (S.tenancy?.owner_phone || "").replace(/\D/g, "");
+  $("#nList").innerHTML = KINDS.map(([k, title, sub], i) => `
+    <div class="card notice" data-kind="${k}">
+      <h4><span>0${i + 1}</span>${title}</h4><small>${sub}</small>
+      <textarea aria-label="${title}" placeholder="Generate drafts to fill this in.">${esc(S.notices[k] || "")}</textarea>
+      <div class="row">
+        <button type="button" class="btn small ghost" data-ncopy="${k}">Copy text</button>
+        ${k === "whatsapp" && phone ? `<button type="button" class="btn small ghost" data-nwa="${k}">Open in WhatsApp</button>` : ""}
+        <button type="button" class="btn small ghost" data-nsave="${k}">Save edits</button>
+      </div>
+    </div>`).join("");
+}
+$("#genBtn").addEventListener("click", async () => {
+  const ctx = noticeCtx();
+  if (!ctx.disputed) { toast("Add deductions on the Deposit claim screen first.", true); return go("claim"); }
+  const btn = $("#genBtn");
+  busy(btn, true, "Writing drafts…");
+  let out;
+  try {
+    out = await ai("notices", {
+      tenant: S.profile.name, tenancy: S.tenancy, disputed: ctx.disputed,
+      photos: S.photos.filter((p) => p.locked).map((p) => ({ area: p.area, tags: p.ai_tags, lockedOn: fmtDate(p.captured_at) })),
+      complaints: S.complaints.filter((c) => c.status !== "fixed").map((c) => ({ title: c.title, reportedOn: fmtDate(c.reported_at), daysUnfixed: daysSince(c.reported_at) })),
+      deductions: S.deductions.map((d) => ({ reason: d.reason, amount: d.amount, verdict: d.ai_verdict, why: d.ai_reason })),
+    });
+    if (!out.whatsapp || !out.formal || !out.grievance) throw new Error("incomplete");
+  } catch { out = localNotices(ctx); }
+  try { await api.saveNotices({ whatsapp: out.whatsapp, formal: out.formal, grievance: out.grievance }); toast("All 3 notice drafts generated."); }
+  catch (ex) { toast(ex.message, true); }
+  finally { busy(btn, false); renderNotices(); }
+});
+$("#nList").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const k = b.dataset.ncopy || b.dataset.nwa || b.dataset.nsave;
+  const text = $(`.notice[data-kind="${k}"] textarea`).value;
+  if (b.dataset.ncopy) {
+    try { await navigator.clipboard.writeText(text); toast("Copied."); } catch { toast("Couldn't access the clipboard. Select and copy manually.", true); }
+  } else if (b.dataset.nwa) {
+    window.open(`https://wa.me/${S.tenancy.owner_phone.replace(/\D/g, "")}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+  } else if (b.dataset.nsave) {
+    if (text.trim().length < 10) return toast("Draft can't be shorter than 10 characters.", true);
+    try { await api.saveNotices({ [k]: text }); toast("Draft edits saved."); } catch (ex) { toast(ex.message, true); }
+  }
+});
+$("#pdfBtn").addEventListener("click", async () => {
+  const btn = $("#pdfBtn");
+  busy(btn, true, "Building PDF…");
+  try {
+    const { jsPDF } = await import("https://esm.sh/jspdf@2.5.1");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const clean = (s) => String(s || "").replace(/₹/g, "Rs ").replace(/[–—]/g, "-").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/[^\x00-\xFF]/g, "");
+    const W = 515; let y = 56;
+    const line = (txt, size = 10.5, bold = false, gap = 6) => {
+      doc.setFont("helvetica", bold ? "bold" : "normal"); doc.setFontSize(size);
+      for (const l of doc.splitTextToSize(clean(txt), W)) { if (y > 790) { doc.addPage(); y = 56; } doc.text(l, 40, y); y += size * 1.35; }
+      y += gap;
+    };
+    const t = S.tenancy, m = money();
+    line("FixFlow - Deposit evidence & notice", 18, true, 4);
+    line(`Generated ${fmtStamp(Date.now())}`, 9, false, 14);
+    line(`${S.profile.name} · ${t.room}, ${t.pg_name}${t.address ? ", " + t.address : ""}`, 11, true);
+    line(`Deposit ${rupee(t.deposit)} · Move-in ${fmtDate(t.move_in)}${t.move_out ? " · Move-out " + fmtDate(t.move_out) : ""}`, 10, false, 12);
+    line("Locked move-in evidence", 12, true, 2);
+    S.photos.filter((p) => p.locked).forEach((p) => line(`• ${cap(p.area)} (locked ${fmtStamp(p.locked_at || p.captured_at)}): ${p.ai_tags.join(", ") || "no defects"}. ${p.ai_summary}`, 10, false, 2));
+    y += 8; line("Deduction audit", 12, true, 2);
+    S.deductions.forEach((d) => line(`• ${d.reason} - ${rupee(d.amount)} - ${(d.ai_verdict || "not audited").toUpperCase()}: ${d.ai_reason || ""}`, 10, false, 2));
+    line(`Disputed: ${rupee(m.disputed)} · Refund due: ${rupee(m.refund)}`, 11, true, 14);
+    KINDS.forEach(([k, title]) => { if (S.notices[k]) { line(title, 12, true, 2); line(S.notices[k], 10, false, 12); } });
+    line("FixFlow helps you communicate with evidence. It is not legal advice.", 8.5);
+    doc.save(`FixFlow-${t.room.replace(/\W+/g, "-")}-deposit-notice.pdf`);
+    toast("PDF downloaded.");
+  } catch (ex) { toast("Couldn't build the PDF: " + ex.message, true); }
+  finally { busy(btn, false); }
+});
+
+/* ================= warden ================= */
+let W = null;
+$("#wForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("#wCode").value.trim().toUpperCase(), pin = $("#wPin").value.trim();
+  $("#wErr").textContent = "";
+  if (!code || !pin) return ($("#wErr").textContent = "Enter your PG code and PIN.");
+  const btn = $("#wGo");
+  busy(btn, true, "Checking…");
+  const { data: ok } = await db.rpc("ff_check_pin", { p_code: code, p_pin: pin });
+  busy(btn, false);
+  if (!ok) { $("#wBoard").hidden = true; return ($("#wErr").textContent = "Wrong PG code or PIN."); }
+  W = { code, pin };
+  await loadWarden();
+});
+async function loadWarden() {
+  const { data, error } = await db.rpc("ff_warden_list", { p_code: W.code, p_pin: W.pin });
+  if (error) return ($("#wErr").textContent = error.message);
+  const rank = { open: 0, in_progress: 1, fixed: 2 };
+  const list = data.sort((a, b) => rank[a.status] - rank[b.status] || URG[a.urgency] - URG[b.urgency] || b.supporters - a.supporters || new Date(a.reported_at) - new Date(b.reported_at));
+  const n = (s) => list.filter((c) => c.status === s).length;
+  $("#wStats").innerHTML = `<div class="stat warn"><span>Open</span><b>${n("open")}</b></div><div class="stat"><span>In progress</span><b>${n("in_progress")}</b></div><div class="stat good"><span>Fixed</span><b>${n("fixed")}</b></div>`;
+  $("#wList").innerHTML = list.map((c) => {
+    const d = daysSince(c.reported_at), fixed = c.status === "fixed";
+    return `<article class="item">
+      <div>
+        <div class="badges"><span class="badge">${esc(c.category)}</span><span class="badge ${esc(c.urgency)}">${esc(c.urgency)}</span><span class="badge ${esc(c.status)}">${STATUS_LABEL[c.status]}</span>${c.supporters > 1 ? `<span class="badge ghost">${c.supporters} residents</span>` : ""}</div>
+        <h4>${esc(c.title)}</h4><p>${esc(c.description)}</p>
+        <div class="meta">${esc(c.resident_name)} · Room ${esc(c.room || "-")} · ${fmtStamp(c.reported_at)}</div>
+        ${fixed ? "" : `<div class="acts">${c.status === "open" ? `<button class="btn small ghost" data-w="${c.id}" data-s="in_progress">Start work</button>` : ""}<button class="btn small primary" data-w="${c.id}" data-s="fixed">Mark fixed</button></div>`}
+      </div>
+      <div class="days ${fixed ? "done" : d >= 3 ? "hot" : ""}">${fixed ? `<b>Fixed</b><span>${fmtDate(c.fixed_at)}</span>` : `<b>${d}</b><span>day${d === 1 ? "" : "s"} open</span>`}</div>
+    </article>`;
+  }).join("") || `<div class="empty-list">No complaints in this PG yet.</div>`;
+  $("#wBoard").hidden = false;
+}
+$("#wList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-w]");
+  if (!b) return;
+  busy(b, true, "Saving…");
+  const { error } = await db.rpc("ff_warden_set", { p_code: W.code, p_pin: W.pin, p_id: b.dataset.w, p_status: b.dataset.s });
+  if (error) { toast(error.message, true); busy(b, false); return; }
+  toast(b.dataset.s === "fixed" ? "Marked fixed. The resident sees it now." : "Marked in progress.");
+  await loadWarden(); loadHeroStats();
+});
+
+/* ================= boot ================= */
+new IntersectionObserver(([e]) => document.body.classList.toggle("in-app", e.isIntersecting), { rootMargin: "0px 0px -30% 0px" }).observe($("#app"));
+setAuthMode("signup");
 loadHeroStats();

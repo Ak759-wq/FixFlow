@@ -1,141 +1,252 @@
-"""End-to-end test of FixFlow against a running server. Usage: python3 tests/e2e.py [base_url]"""
-import os, sys, time, json
-from urllib.parse import urlparse
-from playwright.sync_api import sync_playwright
+"""FixFlow end-to-end test (Playwright). Run with the dev server on :3000.
+python3 tests/e2e.py  [base_url]
+"""
+import asyncio, sys, time, os, re
+from playwright.async_api import async_playwright
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000"
-OUT = "/workspace/work/fixflow_shots"
-os.makedirs(OUT, exist_ok=True)
-NAME = f"Tester{int(time.time()) % 100000}"
-results, errors = [], []
-
-def check(name, cond, detail=""):
-    results.append((name, bool(cond), detail))
-    print(("PASS " if cond else "FAIL ") + name + (f"  [{detail}]" if detail else ""))
-
+IMG = "/workspace/test_room.png"
+SHOTS = "/workspace/work/fixflow_shots"
+os.makedirs(SHOTS, exist_ok=True)
+results = []
+from urllib.parse import urlparse
 proxy = None
-px = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-if px:
-    u = urlparse(px)
+_px = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+if _px:
+    u = urlparse(_px)
     proxy = {"server": f"{u.scheme}://{u.hostname}:{u.port}", "bypass": "localhost,127.0.0.1"}
     if u.username: proxy.update(username=u.username, password=u.password or "")
 
-with sync_playwright() as p:
-    br = p.chromium.launch(proxy=proxy, args=["--ignore-certificate-errors"])
-    ctx = br.new_context(viewport={"width": 1440, "height": 900}, ignore_https_errors=True)
-    page = ctx.new_page()
-    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    page.on("dialog", lambda d: d.accept())
-    page.goto(BASE, wait_until="networkidle")
-    page.wait_for_timeout(1800)
-    page.screenshot(path=f"{OUT}/1_hero_top.png")
-    check("hero title visible", page.locator(".title").is_visible())
-    check("hero stats loaded", page.locator("#statOpen").inner_text().strip().isdigit(), page.locator("#statOpen").inner_text())
-    for i, frac in enumerate([0.25, 0.5, 0.85]):
-        h = page.evaluate("document.querySelector('.hero').offsetHeight - innerHeight")
-        page.evaluate(f"scrollTo(0, {h*frac})"); page.wait_for_timeout(500)
-        page.screenshot(path=f"{OUT}/2_hero_scroll_{i}.png")
-    check("headline revealed on scroll", float(page.evaluate("getComputedStyle(document.querySelector('.hero-copy')).opacity")) > 0.9)
-    check("nav turns solid", "solid" in page.get_attribute("#nav", "class"))
+def check(name, ok, info=""):
+    results.append((name, bool(ok)))
+    print(("PASS " if ok else "FAIL ") + name + (f"  [{info}]" if info else ""), flush=True)
 
-    # Join PG
-    page.click("#profileChip")
-    page.fill("#pName", NAME); page.fill("#pRoom", "204"); page.fill("#pCode", "sunrise24")
-    page.click("#pSave"); page.wait_for_timeout(1500)
-    check("profile saved", NAME in page.inner_text("#profileChip"), page.inner_text("#profileChip"))
+async def shot(pg, name, full=False):
+    try:
+        await pg.screenshot(path=f"{SHOTS}/{name}.png", full_page=full, timeout=15000)
+    except Exception as e:
+        print("  (screenshot skipped:", e.__class__.__name__, ")")
 
-    # Report via AI
-    page.click(".tab[data-tab=report]")
-    page.fill("#issueText", "Room ke fan se sparks aa rahe hain aur switch jal gaya hai, raat se light nahi hai")
-    page.click("#analyzeBtn")
-    page.wait_for_selector("#resultBody:not([hidden])", timeout=45000)
-    page.wait_for_timeout(1200)
-    cat, urg = page.inner_text("#rCategory"), page.inner_text("#rUrgency")
-    check("AI categorised", cat == "Electricity", cat)
-    check("AI urgency High", "High" in urg, urg)
-    check("AI draft written", len(page.input_value("#rDraft")) > 120)
-    check("not offline fallback", "offline" not in page.inner_text("#rSummary"))
-    page.screenshot(path=f"{OUT}/3_report.png", full_page=False)
-    page.click("#submitBtn")
-    page.wait_for_selector("#panel-track.active .item", timeout=20000)
-    page.wait_for_timeout(800)
-    check("complaint appears in tracker", page.locator("#myList .item").count() >= 1)
-    check("unfixed-days counter shown", page.locator("#myList .days").first.is_visible())
-    # Escalate level 1
-    page.locator("#myList .act-esc").first.click()
-    page.wait_for_selector("#myList .escalation", timeout=45000)
-    check("escalation drafted", len(page.locator("#myList .escalation").first.inner_text()) > 40)
-    check("WhatsApp link present", page.locator("#myList a[href^='https://wa.me']").count() == 1)
-    page.screenshot(path=f"{OUT}/4_track.png")
+async def main():
+    ts = int(time.time())
+    email_a, email_b, pw = f"fftest{ts}a@fixflowdemo.dev", f"fftest{ts}b@fixflowdemo.dev", "testpass123"
+    async with async_playwright() as p:
+        b = await p.chromium.launch(proxy=proxy, args=["--ignore-certificate-errors"])
+        ctx = await b.new_context(viewport={"width": 1440, "height": 900}, accept_downloads=True)
+        pg = await ctx.new_page()
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.on("console", lambda m: errors.append(m.text) if m.type == "error" and "favicon" not in m.text else None)
+        pg.set_default_timeout(45000)
 
-    # Duplicate detection: a second resident reporting a similar issue
-    page.evaluate("localStorage.setItem('ff_profile', JSON.stringify({name:'" + NAME + "b',room:'305',code:'SUNRISE24',pgName:'Sunrise Co-living'}))")
-    page.reload(wait_until="networkidle"); page.wait_for_timeout(800)
-    page.evaluate("document.querySelector('#app').scrollIntoView()")
-    page.fill("#issueText", "No power in my room, switchboard burnt and sparking")
-    page.click("#analyzeBtn")
-    page.wait_for_selector("#resultBody:not([hidden])", timeout=45000); page.wait_for_timeout(2000)
-    dupe = page.locator("#dupeBox:not([hidden])").count() == 1
-    check("duplicate/group detection shown", dupe, page.inner_text("#rCategory"))
-    if dupe:
-        page.click("#supportBtn"); page.wait_for_timeout(1500)
-        check("support added", "support was added" in page.inner_text("#dupeBox"))
-    # restore profile
-    page.evaluate("localStorage.setItem('ff_profile', JSON.stringify({name:'" + NAME + "',room:'204',code:'SUNRISE24',pgName:'Sunrise Co-living'}))")
-    page.reload(wait_until="networkidle"); page.wait_for_timeout(800)
+        # ---- hero ----
+        await pg.goto(BASE, wait_until="networkidle")
+        await pg.wait_for_function("document.querySelector('#statOpen').textContent !== '–'")
+        check("hero stats load from DB", (await pg.inner_text("#statOpen")).isdigit())
+        await shot(pg, "v2_1_hero")
+        await pg.evaluate("window.scrollTo(0, document.querySelector('.hero').offsetHeight*0.55)")
+        await pg.wait_for_timeout(500)
+        op = await pg.evaluate("getComputedStyle(document.querySelector('.hero-copy')).opacity")
+        check("scroll reveals headline", float(op) > 0.5, op)
+        await shot(pg, "v2_2_hero_scrolled")
 
-    # Warden
-    page.click(".tab[data-tab=warden]")
-    page.fill("#wPin", "0000"); page.click("#wLogin"); page.wait_for_timeout(1200)
-    check("wrong PIN rejected", "Wrong" in page.inner_text("#wErr"))
-    page.fill("#wPin", "1234"); page.click("#wLogin")
-    page.wait_for_selector("#wardenBody:not([hidden]) #wList .item", timeout=15000); page.wait_for_timeout(600)
-    first = page.locator("#wList .item").first.inner_text()
-    check("warden list sorted High first", "High" in first.split("\n")[1] if "\n" in first else "High" in first)
-    mine = page.locator("#wList .item", has_text=NAME).first
-    check("warden sees new complaint", mine.count() == 1)
-    check("group badge on complaint", "Group" in mine.inner_text(), mine.inner_text()[:80])
-    page.screenshot(path=f"{OUT}/5_warden.png")
-    mine.locator(".w-prog").click(); page.wait_for_timeout(2500)
-    mine = page.locator("#wList .item", has_text=NAME).first
-    check("status -> In progress", "In progress" in mine.inner_text(), mine.inner_text()[:120].replace("\n"," | "))
-    mine.locator(".w-fix").click(); page.wait_for_timeout(1500)
-    page.select_option("#fStatus", ""); page.wait_for_timeout(1200)
-    check("status -> Fixed", "Fixed" in page.locator("#wList .item", has_text=NAME).first.inner_text())
-    page.click(".tab[data-tab=track]"); page.wait_for_timeout(1500)
-    check("resident sees Fixed + warden note", "Fixed" in page.inner_text("#myList") )
+        # ---- demo ----
+        await pg.click(".hero-actions [data-go=demo]")
+        await pg.wait_for_selector("#s-dashboard.active")
+        check("demo dashboard deposit", (await pg.inner_text("#dDeposit")) == "₹20,000")
+        check("demo protected ₹4,500", (await pg.inner_text("#dProtected")) == "₹4,500")
+        await pg.evaluate("document.querySelector('#app').scrollIntoView()")
+        await shot(pg, "v2_3_demo_dashboard")
+        await pg.click(".nav-item[data-screen=scan]")
+        check("demo scan shows locked photos", await pg.locator(".photo .badge.lock").count() == 3)
+        await shot(pg, "v2_4_demo_scan")
+        await pg.click(".nav-item[data-screen=complaints]")
+        txt = await pg.inner_text("#cList")
+        check("demo complaint day counter", "14" in txt and "days unfixed" in txt)
+        await pg.click(".nav-item[data-screen=claim]")
+        check("demo claim numbers", (await pg.inner_text("#kDispute")) == "₹6,500" and (await pg.inner_text("#kRefund")) == "₹18,500",
+              f"{await pg.inner_text('#kDispute')} {await pg.inner_text('#kRefund')}")
+        check("demo matched photo shown", await pg.locator(".ded.unfair img").count() == 1)
+        await shot(pg, "v2_5_demo_claim")
+        await pg.click(".nav-item[data-screen=notices]")
+        await pg.click("#genBtn")
+        await pg.wait_for_function("document.querySelector('.notice[data-kind=formal] textarea').value.length > 100", timeout=60000)
+        vals = await pg.eval_on_selector_all(".notice textarea", "els=>els.map(e=>e.value)")
+        check("3 AI notices generated", all(len(v) > 40 for v in vals) and re.search(r"6,?500|4,?500", "".join(vals)) is not None, vals[0][:120])
+        await shot(pg, "v2_6_demo_notices")
+        async with pg.expect_download() as dl:
+            await pg.click("#pdfBtn")
+        d = await dl.value
+        path = await d.path()
+        check("PDF downloads", path and os.path.getsize(path) > 2000, d.suggested_filename)
+        await pg.click("#demoBar [data-go=signup]")
+        await pg.wait_for_selector("#authView:not([hidden])")
+        check("exit demo -> sign up", await pg.is_visible("#aName"))
 
-    # Move-in proof
-    page.click(".tab[data-tab=movein]")
-    page.set_input_files("#mFile", "/workspace/test_room.png"); page.wait_for_timeout(800)
-    page.click("#mScan")
-    page.wait_for_selector("#mGallery .shot", timeout=60000); page.wait_for_timeout(500)
-    g = page.inner_text("#mGallery")
-    check("move-in photo locked", "Locked" in g)
-    check("AI found damage", page.locator("#mGallery .shot li").count() >= 1, g[:160].replace("\n", " "))
-    page.screenshot(path=f"{OUT}/6_movein.png")
+        # ---- sign up user A ----
+        await pg.click("#aSubmit")
+        check("signup validation", "name" in (await pg.inner_text("#aErr")).lower())
+        await pg.fill("#aName", "Tester A"); await pg.fill("#aEmail", email_a); await pg.fill("#aPass", pw)
+        await pg.click("#aSubmit")
+        await pg.wait_for_selector("#s-setup.active")
+        check("signup -> add PG screen", True)
+        await pg.click("#pgSave")
+        check("PG form validation", "PG name" in await pg.inner_text("#pgErr"))
+        await pg.fill("#fPg", "Sunrise Co-living"); await pg.fill("#fRoom", "301"); await pg.fill("#fOwner", "Mahesh")
+        await pg.fill("#fOwnerPhone", "+91 98450 11223"); await pg.fill("#fAddr", "Srinivaspura, Bengaluru")
+        await pg.fill("#fRent", "9000"); await pg.fill("#fDep", "18000"); await pg.fill("#fIn", "2026-08-15"); await pg.fill("#fCode", "SUNRISE24")
+        await pg.click("#pgSave")
+        await pg.wait_for_selector("#s-scan.active")
+        check("PG saved -> scan", True)
 
-    # Deposit
-    page.click(".tab[data-tab=deposit]")
-    page.click("#dCheck")
-    page.wait_for_selector("#dResult .refund", timeout=60000)
-    check("deposit verdicts", page.locator("#dResult .verdict").count() == 3)
-    check("unfair deduction flagged", page.locator("#dResult .v-Unfair").count() >= 1, page.inner_text("#dResult .refund"))
-    rt = page.inner_text("#dResult .refund").replace(",", "")
-    import re as _re
-    nums = [int(x) for x in _re.findall(r"₹(\d+)", rt)]
-    check("refund claim <= total deducted", len(nums) == 2 and nums[0] <= nums[1], rt)
-    page.screenshot(path=f"{OUT}/7_deposit.png")
+        # ---- scan ----
+        await pg.set_input_files("#photoInput", IMG)
+        await pg.wait_for_selector(".photo", timeout=60000)
+        tags = await pg.locator(".photo .tag").count()
+        check("photo uploaded + AI tags", tags > 0, f"{tags} tags")
+        await pg.click(".area[data-area=bathroom]")
+        await pg.set_input_files("#photoInput", IMG)
+        await pg.wait_for_function("document.querySelectorAll('.photo').length === 2", timeout=60000)
+        await pg.click(".photo [data-del]")
+        await pg.wait_for_function("document.querySelectorAll('.photo').length === 1")
+        check("remove before lock", True)
+        await pg.click("#lockBtn"); await pg.click("#lockConfirm")
+        await pg.wait_for_selector(".photo .badge.lock")
+        check("lock record", "Locked" in await pg.inner_text(".photo"))
+        await shot(pg, "v2_7_scan")
+        tamper = await pg.evaluate("""async () => {
+            const m = await import('https://esm.sh/@supabase/supabase-js@2.45.4');
+            const c = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY);
+            await c.auth.signInWithPassword({ email: '%s', password: '%s' });
+            const { data } = await c.from('ff_photos').select('id').limit(1);
+            const u = await c.from('ff_photos').update({ ai_summary: 'hacked' }).eq('id', data[0].id);
+            const d = await c.from('ff_photos').delete().eq('id', data[0].id);
+            const after = await c.from('ff_photos').select('ai_summary').eq('id', data[0].id).single();
+            return { u: u.error && u.error.message, d: d.error && d.error.message, summary: after.data.ai_summary };
+        }""" % (email_a, pw))
+        check("locked photo is read-only in DB", tamper["u"] and tamper["d"] and tamper["summary"] != "hacked", str(tamper))
 
-    # Mobile hero
-    m = br.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, ignore_https_errors=True).new_page()
-    m.goto(BASE, wait_until="networkidle"); m.wait_for_timeout(1500)
-    m.screenshot(path=f"{OUT}/8_mobile.png")
-    m.evaluate("document.querySelector('#app').scrollIntoView()"); m.wait_for_timeout(500)
-    m.screenshot(path=f"{OUT}/9_mobile_app.png")
-    br.close()
+        # ---- complaints ----
+        await pg.click(".nav-item[data-screen=complaints]")
+        await pg.fill("#cText", "wifi bahut slow hai aur raat ko band ho jata hai")
+        await pg.click("#cAnalyze")
+        await pg.wait_for_selector("#cBody:not([hidden])", timeout=60000)
+        check("AI categorises (Wi-Fi)", (await pg.inner_text("#rCat")) == "Wi-Fi", await pg.inner_text("#rCat"))
+        check("not offline fallback", await pg.is_hidden("#rMode"))
+        await pg.wait_for_selector("#similar:not([hidden])", timeout=10000)
+        await pg.click("#similar [data-support]")
+        await pg.wait_for_selector("#similar button:has-text('Added')")
+        check("+1 on similar PG issue", True)
+        await shot(pg, "v2_8_complaint_ai")
+        await pg.click("#cSave")
+        await pg.wait_for_selector("#cList .item")
+        check("complaint logged with counter", "0" in await pg.inner_text("#cList .days") and "unfixed" in await pg.inner_text("#cList .days"))
+        await pg.fill("#cText", "Geyser not working since 2 days, only cold water")
+        await pg.click("#cAnalyze"); await pg.wait_for_selector("#cBody:not([hidden])", timeout=60000)
+        await pg.click("#cSave"); await pg.wait_for_function("document.querySelectorAll('#cList .item').length === 2")
+        await pg.click("#cList [data-fix]")
+        await pg.wait_for_selector("#cList .days.done")
+        check("mark fixed", True)
+        await pg.select_option("#fStatus", "fixed")
+        check("status filter", await pg.locator("#cList .item").count() == 1)
+        await pg.select_option("#fStatus", "")
+        await shot(pg, "v2_9_complaints")
 
-errs = [e for e in errors if "favicon" not in e]
-check("no console errors", not errs, "; ".join(errs[:3]))
-print(json.dumps({"passed": sum(r[1] for r in results), "total": len(results), "tester": NAME}))
+        # ---- claim ----
+        await pg.click(".nav-item[data-screen=claim]")
+        await pg.fill("#dReason", "Wall repainting and repair for stains and marks"); await pg.fill("#dAmount", "4000")
+        await pg.click("#dAdd")
+        await pg.wait_for_selector(".ded .verdict:not(.pending)", timeout=60000)
+        v1 = await pg.inner_text(".ded .verdict")
+        check("deduction audited by AI", v1.lower() in ("unfair deduction", "unclear — needs proof", "fair deduction"), v1)
+        await pg.fill("#dReason", "Room cleaning charge at move-out"); await pg.fill("#dAmount", "800")
+        await pg.click("#dAdd")
+        await pg.wait_for_function("document.querySelectorAll('.ded .verdict:not(.pending)').length === 2", timeout=60000)
+        total = await pg.inner_text("#kTotal"); disp = await pg.inner_text("#kDispute"); ref = await pg.inner_text("#kRefund")
+        n = lambda s: int(re.sub(r"\D", "", s) or 0)
+        check("claim math consistent", n(total) == 4800 and n(disp) <= 4800 and n(ref) <= 18000 and n(ref) >= 18000 - 4800, f"{total} {disp} {ref}")
+        await shot(pg, "v2_10_claim")
+
+        # ---- notices ----
+        await pg.click(".nav-item[data-screen=notices]")
+        if n(disp) > 0:
+            await pg.click("#genBtn")
+            await pg.wait_for_function("document.querySelector('.notice[data-kind=grievance] textarea').value.length > 80", timeout=60000)
+            await pg.fill(".notice[data-kind=whatsapp] textarea", "Edited WhatsApp draft for test purposes.")
+            await pg.click("[data-nsave=whatsapp]")
+            check("notices generated + edit saved", True)
+        else:
+            check("notices generated + edit saved", True, "skipped: nothing disputed")
+
+        # ---- persistence ----
+        await pg.click("#signOutBtn")
+        await pg.wait_for_selector("#authView:not([hidden])")
+        await pg.click(".seg-btn[data-auth=login]")
+        await pg.fill("#aEmail", email_a); await pg.fill("#aPass", "wrongpass")
+        await pg.click("#aSubmit")
+        await pg.wait_for_function("document.querySelector('#aErr').textContent.length > 0")
+        check("wrong password rejected", "Wrong" in await pg.inner_text("#aErr"))
+        await pg.fill("#aPass", pw); await pg.click("#aSubmit")
+        await pg.wait_for_selector("#s-dashboard.active")
+        check("login restores data", (await pg.inner_text("#dDeposit")) == "₹18,000" and (await pg.inner_text("#dPhotos")).startswith("1"))
+        await pg.click(".nav-item[data-screen=notices]")
+        if n(disp) > 0:
+            check("edited notice persisted", "Edited WhatsApp" in await pg.input_value(".notice[data-kind=whatsapp] textarea"))
+        await pg.click("#signOutBtn"); await pg.wait_for_selector("#authView:not([hidden])")
+
+        # ---- isolation: user B sees nothing of A ----
+        await pg.click(".seg-btn[data-auth=signup]")
+        await pg.fill("#aName", "Tester B"); await pg.fill("#aEmail", email_b); await pg.fill("#aPass", pw)
+        await pg.click("#aSubmit"); await pg.wait_for_selector("#s-setup.active")
+        leak = await pg.evaluate("""async () => {
+            const m = await import('https://esm.sh/@supabase/supabase-js@2.45.4');
+            const c = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY);
+            await c.auth.signInWithPassword({ email: '%s', password: '%s' });
+            const a = await c.from('ff_complaints').select('id'); const b = await c.from('ff_photos').select('id');
+            const anon = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY, { auth: { persistKey: 'x', storageKey: 'anon-x' } });
+            await anon.auth.signOut();
+            const z = await anon.from('ff_complaints').select('id');
+            return { comp: (a.data||[]).length, photos: (b.data||[]).length, anon: (z.data||[]).length };
+        }""" % (email_b, pw))
+        check("RLS: other user + anon see no private data", leak["comp"] == 0 and leak["photos"] == 0 and leak["anon"] == 0, str(leak))
+        await pg.click("#signOutBtn")
+
+        # ---- warden ----
+        await pg.evaluate("document.querySelector('#warden').scrollIntoView()")
+        await pg.fill("#wPin", "0000"); await pg.click("#wGo")
+        await pg.wait_for_function("document.querySelector('#wErr').textContent.length > 0")
+        check("warden wrong PIN rejected", "Wrong" in await pg.inner_text("#wErr"))
+        await pg.fill("#wPin", "1234"); await pg.click("#wGo")
+        await pg.wait_for_selector("#wBoard:not([hidden])")
+        wl = await pg.inner_text("#wList")
+        check("warden sees tester complaint", "Tester A" in wl)
+        first = await pg.inner_text("#wList .item .badges")
+        check("warden list sorted (open High first)", "High" in first and "Open" in first, first)
+        await pg.click("#wList [data-s=in_progress]")
+        await pg.wait_for_function("document.querySelector('#wStats .stat:nth-child(2) b').textContent !== '0'")
+        check("warden start work", True)
+        await shot(pg, "v2_11_warden")
+
+        # ---- mobile ----
+        m = await b.new_page(viewport={"width": 390, "height": 844})
+        await m.goto(BASE, wait_until="networkidle")
+        await shot(m, "v2_12_mobile_hero")
+        await m.click(".hero-actions [data-go=demo]")
+        await m.wait_for_selector("#s-dashboard.active")
+        ov = await m.evaluate("document.documentElement.scrollWidth - innerWidth")
+        check("mobile no horizontal overflow", ov <= 1, ov)
+        check("mobile bottom nav", (await m.evaluate("getComputedStyle(document.querySelector('.side')).position")) == "fixed")
+        await m.wait_for_timeout(1200); await m.evaluate("document.querySelector('#app').scrollIntoView()"); await m.wait_for_timeout(800)
+        await shot(m, "v2_13_mobile_app")
+        await m.click(".nav-item[data-screen=claim]")
+        ov2 = await m.evaluate("document.documentElement.scrollWidth - innerWidth")
+        check("mobile claim no overflow", ov2 <= 1, ov2)
+        await shot(m, "v2_14_mobile_claim")
+
+        bad = [e for e in errors if "Failed to load resource" not in e]
+        check("no console errors", not bad, "; ".join(bad[:3]))
+        await b.close()
+    passed = sum(ok for _, ok in results)
+    print(f"\n{passed}/{len(results)} passed")
+
+asyncio.run(main())

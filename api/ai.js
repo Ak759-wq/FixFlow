@@ -1,5 +1,5 @@
 // FixFlow AI endpoint (Vercel serverless function).
-// POST /api/ai  { action: "analyze" | "escalate" | "inspect" | "deposit", ...payload }
+// POST /api/ai  { action: "analyze" | "inspect" | "audit" | "notices", ...payload }
 // Uses Google Gemini. Set GEMINI_API_KEY (and optionally GEMINI_MODEL) in the environment.
 
 const MODELS = [process.env.GEMINI_MODEL, "gemini-3.5-flash-lite", "gemini-flash-lite-latest"].filter(Boolean);
@@ -59,19 +59,48 @@ const handlers = {
   async inspect({ image, area }) {
     const m = /^data:(image\/\w+);base64,(.+)$/.exec(image || "");
     if (!m) throw new Error("Invalid image");
-    return gemini(
+    const out = await gemini(
       [
         { inline_data: { mime_type: m[1], data: m[2] } },
-        { text: `This is a move-in photo of the "${area || "room"}" in a PG/hostel room. List any existing damage or wear a tenant should document (cracks, stains, broken fittings, seepage, peeling paint, missing items). Be specific about location. If nothing is visible, say so.` },
+        { text: `This is a move-in photo of the "${area || "room"}" in a PG/hostel room in India. A tenant is documenting damage that already exists before they move in. List each visible pre-existing defect as a short lowercase tag (2-4 words, e.g. "water stain", "loose hinge", "peeling plaster", "hard water scaling"). Then write one factual sentence describing the defects and where they are. If the photo is not of a room, or nothing is damaged, return an empty tags list and say so.` },
       ],
-      `{"issues": [{"item": string, "location": string, "severity": "Minor"|"Moderate"|"Major"}], "summary": string}`
+      `{"tags": string[], "summary": string}`
     );
+    out.tags = Array.isArray(out.tags) ? out.tags.slice(0, 8).map(String) : [];
+    out.summary = String(out.summary || "");
+    return out;
   },
 
-  async deposit({ deductions, movein, complaints, resident, room, deposit }) {
+  async audit({ deductions, photos, complaints, deposit }) {
+    const out = await gemini(
+      [{ text: `A PG tenant in Bengaluru is moving out. Security deposit: Rs ${deposit}.
+Locked, timestamped move-in photos (pre-existing damage): ${JSON.stringify(photos)}
+Issues the tenant reported during the stay that the PG did not fix: ${JSON.stringify(complaints)}
+The owner wants to deduct: ${JSON.stringify(deductions)}
+
+For EACH deduction (keep its id) decide:
+- "unfair" if the damage it charges for already appears in a move-in photo, or comes from a reported issue the PG never fixed. Set matchedPhotoId to the matching photo id when there is one.
+- "fair" if it is a normal, itemised, reasonable charge (e.g. agreed cleaning fee) or genuine tenant damage.
+- "unclear" if it is vague, unitemised or needs a bill.
+Give a one or two sentence reason addressed to the tenant ("Your locked move-in wall photo ...").` }],
+      `{"results": [{"id": string, "verdict": "fair"|"unfair"|"unclear", "reason": string, "matchedPhotoId": string}]}`
+    );
+    return { results: Array.isArray(out.results) ? out.results : [] };
+  },
+
+  async notices({ tenant, tenancy, photos, complaints, deductions, disputed }) {
     return gemini(
-      [{ text: `A PG tenant is moving out. Security deposit: Rs ${deposit}. The owner proposes these deductions: ${JSON.stringify(deductions)}.\nDamage documented at move-in (pre-existing, timestamped): ${JSON.stringify(movein)}.\nIssues the tenant reported during the stay: ${JSON.stringify(complaints)}.\nFor each deduction decide: "Unfair" if it matches pre-existing damage or a reported-but-unfixed issue, "Fair" if it looks like genuine tenant damage, "Unclear" otherwise, with a one-line reason. Then write a polite, firm refund request notice to the owner from ${resident}, Room ${room}, asking to refund the disputed amount within 7 days and referencing the move-in evidence.` }],
-      `{"items": [{"label": string, "amount": number, "verdict": "Fair"|"Unfair"|"Unclear", "reason": string}], "refund_claim": number, "notice": string}`
+      [{ text: `Write three escalating messages from a PG tenant to their PG owner, in clear, calm, firm English.
+Tenant: ${tenant}. PG: ${tenancy.pg_name}, ${tenancy.address || "Bengaluru"}. Room: ${tenancy.room}. Owner/warden: ${tenancy.owner_name || "Sir/Madam"}.
+Monthly rent Rs ${tenancy.monthly_rent}, security deposit Rs ${tenancy.deposit}. Move-in ${tenancy.move_in}, move-out ${tenancy.move_out || "upcoming"}.
+Evidence: locked move-in photos -> ${JSON.stringify(photos)}. Unfixed complaints -> ${JSON.stringify(complaints)}.
+Deductions and AI verdicts -> ${JSON.stringify(deductions)}. Amount the tenant disputes: Rs ${disputed}.
+
+1. whatsapp: a friendly but firm WhatsApp message (60-90 words) asking for the disputed amount back within 7 days, mentioning the dated move-in photos.
+2. formal: a formal written notice (150-220 words) with a subject line, dates, each disputed deduction with the reason, a 7-day deadline and a request for itemised bills for anything else.
+3. grievance: a draft complaint for the National Consumer Helpline (1915 / consumerhelpline.gov.in) describing deficiency in service, the timeline, the evidence, and the relief sought (refund of Rs ${disputed}).
+Use only the facts given; do not invent dates or amounts.` }],
+      `{"whatsapp": string, "formal": string, "grievance": string}`
     );
   },
 };

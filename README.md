@@ -33,3 +33,16 @@ Import the repo, set `GEMINI_API_KEY` (optional `GEMINI_MODEL`) and deploy. `ver
 
 ## Tests
 `python3 tests/e2e.py http://localhost:3000` — Playwright end-to-end run of every flow (28 checks).
+
+
+## v2 (Nov 25, 2026): tenant accounts + deposit proof
+- **Accounts**: Supabase Auth (email + password). Every tenant row is private by RLS (`owner = auth.uid()`).
+- **Move-in scan**: per-area photos (bed, wall, bathroom, wardrobe, floor) uploaded to Supabase Storage, Gemini tags pre-existing defects, then **Lock** stamps a server time. A DB trigger makes locked photos read-only, even for the owner.
+- **Complaints**: voice/text in any language, AI category + urgency + draft, photo, live unfixed-day counter, +1 on similar issues in the same PG, WhatsApp owner.
+- **Deposit claim**: each owner deduction is audited by AI against locked photos and unfixed complaints (fair / unfair / unclear, with the matched photo).
+- **Notices**: three escalating drafts (WhatsApp, formal, consumer helpline), editable, saved, one-tap WhatsApp, PDF export.
+- **Warden dashboard**: PG code + PIN, PIN-checked RPCs only (no table access), sorted by status, urgency and residents affected.
+- **Demo mode**: Riya's Room 204 record, no sign-up needed (AI calls are real, nothing saved).
+
+Setup: run `supabase/schema.sql` then `supabase/seed.sql`. Turn on "Confirm email: off" (or keep it on for production). Set `GEMINI_API_KEY` in Vercel.
+Tests: `python3 tests/e2e.py [url]` (40 checks). Cleanup: `supabase/cleanup_tests.sql`.
