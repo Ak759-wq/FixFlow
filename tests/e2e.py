@@ -83,6 +83,14 @@ async def main():
         await pg.wait_for_selector("#authView:not([hidden])")
         check("exit demo -> sign up", await pg.is_visible("#aName"))
 
+        # ---- google button starts OAuth ----
+        async with pg.expect_request(lambda r: "/auth/v1/authorize" in r.url and "provider=google" in r.url, timeout=15000) as rq:
+            await pg.click("#googleBtn")
+        check("google button starts OAuth", "redirect_to" in (await rq.value).url)
+        await pg.goto(BASE, wait_until="networkidle")
+        await pg.evaluate("document.querySelector('#app').scrollIntoView()")
+        await pg.wait_for_selector("#authView:not([hidden])")
+
         # ---- sign up user A ----
         await pg.click("#aSubmit")
         check("signup validation", "name" in (await pg.inner_text("#aErr")).lower())

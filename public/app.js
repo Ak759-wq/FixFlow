@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const CFG = window.FF_CONFIG;
-const db = createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+const db = createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth: { flowType: "pkce", detectSessionInUrl: true } });
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -176,7 +176,8 @@ async function loadLive() {
     must(db.from("ff_deductions").select("*").order("created_at", { ascending: true })),
     must(db.from("ff_notices").select("*")),
   ]);
-  S.profile = profile || { name: S.user.user_metadata?.name || S.user.email.split("@")[0], phone: S.user.user_metadata?.phone || "" };
+  const md = S.user.user_metadata || {};
+  S.profile = profile || { name: md.name || md.full_name || S.user.email.split("@")[0], phone: md.phone || "" };
   if (!profile) await db.from("ff_profiles").upsert({ id, name: S.profile.name, phone: S.profile.phone || null });
   S.tenancy = tenancy; S.photos = photos; S.complaints = complaints; S.deductions = deductions;
   S.notices = Object.fromEntries(notices.map((n) => [n.kind, n.body]));
@@ -314,6 +315,13 @@ function setAuthMode(m) {
   $("#aErr").textContent = "";
 }
 $$(".seg-btn").forEach((b) => b.addEventListener("click", () => setAuthMode(b.dataset.auth)));
+$("#googleBtn").addEventListener("click", async () => {
+  const btn = $("#googleBtn");
+  busy(btn, true, "Opening Google…");
+  sessionStorage.setItem("ff_oauth", "1");
+  const { error } = await db.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: "select_account" } } });
+  if (error) { busy(btn, false); sessionStorage.removeItem("ff_oauth"); $("#aErr").textContent = /not enabled|provider/i.test(error.message) ? "Google sign-in isn't switched on yet. Use email for now." : error.message; }
+});
 $("#authForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = $("#aEmail").value.trim(), password = $("#aPass").value, name = $("#aName").value.trim(), phone = $("#aPhone").value.trim();
@@ -356,6 +364,11 @@ db.auth.onAuthStateChange((evt, session) => {
     // defer: calling Supabase inside this callback can deadlock the auth lock
     setTimeout(async () => {
       await onSession(session);
+      if (session && sessionStorage.getItem("ff_oauth")) {
+        sessionStorage.removeItem("ff_oauth");
+        history.replaceState(null, "", location.pathname);
+        $("#app").scrollIntoView({ behavior: "smooth" });
+      }
       if (evt === "SIGNED_IN") toast(`Welcome${S.profile?.name ? ", " + S.profile.name.split(" ")[0] : ""}!`);
     }, 0);
   }
