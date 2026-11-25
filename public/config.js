@@ -1,12 +1,13 @@
 // Complete the remaining values from Firebase Console > Project settings > Your apps.
 window.FF_CONFIG = {
   FIREBASE_CONFIG: {
-    apiKey: "REPLACE_WITH_FIREBASE_API_KEY",
+    apiKey: "AIzaSyDEKmrKS0S-wntR2TDwsFDYV_l67oVL_II",
     authDomain: "fixflow-658f3.firebaseapp.com",
     projectId: "fixflow-658f3",
-    storageBucket: "REPLACE_WITH_FIREBASE_STORAGE_BUCKET",
-    messagingSenderId: "REPLACE_WITH_FIREBASE_MESSAGING_SENDER_ID",
-    appId: "REPLACE_WITH_FIREBASE_APP_ID",
+    storageBucket: "fixflow-658f3.firebasestorage.app",
+    messagingSenderId: "124751766392",
+    appId: "1:124751766392:web:4f487e9d07ba6f6ed69e8d",
+    measurementId: "G-DT7L67SWG4",
   },
   FUNCTIONS_REGION: "us-central1",
   AI_ENDPOINT: "/api/ai"
