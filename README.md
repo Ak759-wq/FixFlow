@@ -45,7 +45,7 @@ Import the repo, set `GEMINI_API_KEY` (optional `GEMINI_MODEL`) and deploy. `ver
 - **Demo mode**: Riya's Room 204 record, no sign-up needed (AI calls are real, nothing saved).
 
 ## Firebase setup
-1. Create a Firebase project and register a Web app. Copy its public config values into `FIREBASE_CONFIG` in `public/config.js`.
+1. In Firebase project `fixflow-658f3`, register a Web app if needed. Copy its complete public config values (`apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId`, `appId`) into `FIREBASE_CONFIG` in `public/config.js`; the project ID and default auth domain are already filled in.
 2. In Firebase Authentication, enable **Email/Password** and **Google** providers. Add `localhost` and the deployed site domain to Authorized domains.
 3. Create a Cloud Firestore database and a Cloud Storage bucket.
 4. Enable billing for Cloud Functions, install Firebase CLI, sign in, and select the project with `firebase use --add`. Install Functions dependencies with `npm --prefix functions install`.
