@@ -179,7 +179,7 @@ const demoPgOpen = () => [
 /* ================= data layer ================= */
 const live = () => S.mode === "live";
 function requireFirebase() {
-  if (!firebaseConfigured) throw new Error("Firebase is not configured. Add your Firebase web app settings to public/config.js.");
+  if (!firebaseConfigured) throw new Error("Firebase setup is incomplete. In Firebase Console, open Project settings → General → Your apps, register a Web app if needed, and copy its complete config into public/config.js (apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId).");
 }
 function rowFromDoc(snapshot) {
   if (!snapshot.exists()) return null;
