@@ -1,0 +1,35 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function owns(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function moveInPhotoIsUnlocked(uid, photoId) {
+      return firestore.get(/databases/(default)/documents/photos/$(photoId)).data.owner == uid
+        && firestore.get(/databases/(default)/documents/photos/$(photoId)).data.locked == false;
+    }
+
+    match /users/{uid}/movein/{photoId} {
+      allow read: if owns(uid);
+      allow create: if owns(uid)
+        && moveInPhotoIsUnlocked(uid, photoId)
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if owns(uid) && moveInPhotoIsUnlocked(uid, photoId);
+      allow update: if false;
+    }
+
+    match /users/{uid}/complaints/{fileName} {
+      allow read: if owns(uid);
+      allow create: if owns(uid)
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
