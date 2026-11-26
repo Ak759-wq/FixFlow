@@ -1,14 +1,6 @@
-// Complete the remaining values from Firebase Console > Project settings > Your apps.
+// Public client config. The anon key is safe to ship: Row Level Security limits it to FixFlow tables.
 window.FF_CONFIG = {
-  FIREBASE_CONFIG: {
-    apiKey: "AIzaSyDEKmrKS0S-wntR2TDwsFDYV_l67oVL_II",
-    authDomain: "fixflow-658f3.firebaseapp.com",
-    projectId: "fixflow-658f3",
-    storageBucket: "fixflow-658f3.firebasestorage.app",
-    messagingSenderId: "124751766392",
-    appId: "1:124751766392:web:4f487e9d07ba6f6ed69e8d",
-    measurementId: "G-DT7L67SWG4",
-  },
-  FUNCTIONS_REGION: "us-central1",
+  SUPABASE_URL: "https://skahepxgtddcohrnwnkk.supabase.co",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNrYWhlcHhndGRkY29ocm53bmtrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM0NTUzNzgsImV4cCI6MjEwOTAzMTM3OH0.QynK-olalYLdsPDsXQZ58BvUlzLnpsZB3jCTbQkxK1k",
   AI_ENDPOINT: "/api/ai"
 };

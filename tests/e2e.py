@@ -1,13 +1,18 @@
-"""FixFlow end-to-end test (Playwright). Run with the dev server on :3000.
-python3 tests/e2e.py  [base_url]
+"""FixFlow v3 end-to-end test (Playwright).
+Run with the dev server on :3000 (NODE_USE_ENV_PROXY=1 node dev-server.js) or against the live URL:
+    python3 tests/e2e.py  [base_url]
+Creates fftest* accounts; remove them afterwards with supabase/cleanup_tests.sql.
 """
-import asyncio, sys, time, os, re
+import asyncio, sys, time, os, re, json, hashlib
 from playwright.async_api import async_playwright
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000"
+BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000").rstrip("/")
 IMG = "/workspace/test_room.png"
+IMG2 = os.path.join(os.path.dirname(__file__), "..", "public", "img", "demo", "bathroom.webp")
 SHOTS = "/workspace/work/fixflow_shots"
+TAG = os.environ.get("SHOT_TAG", "v3")
 os.makedirs(SHOTS, exist_ok=True)
+IMG_SHA = hashlib.sha256(open(IMG, "rb").read()).hexdigest()
 results = []
 from urllib.parse import urlparse
 proxy = None
@@ -21,11 +26,35 @@ def check(name, ok, info=""):
     results.append((name, bool(ok)))
     print(("PASS " if ok else "FAIL ") + name + (f"  [{info}]" if info else ""), flush=True)
 
+async def soft(name, coro):
+    """Run a step; record a failure instead of aborting the whole run."""
+    try:
+        return await coro
+    except Exception as e:
+        check(name, False, f"{e.__class__.__name__}: {str(e)[:160]}")
+        return None
+
 async def shot(pg, name, full=False):
+    try:
+        await pg.wait_for_function("!document.querySelector('#toast') || !document.querySelector('#toast').classList.contains('show')", timeout=8000)
+        await pg.wait_for_timeout(450)
+    except Exception:
+        pass
     try:
         await pg.screenshot(path=f"{SHOTS}/{name}.png", full_page=full, timeout=15000)
     except Exception as e:
         print("  (screenshot skipped:", e.__class__.__name__, ")")
+
+N = lambda s: int(re.sub(r"\D", "", s or "") or 0)
+
+CLIENT = """async ({email, pw, code}) => {
+  const m = await import('https://esm.sh/@supabase/supabase-js@2.45.4');
+  const c = m.createClient(FF_CONFIG.SUPABASE_URL, FF_CONFIG.SUPABASE_ANON_KEY, { auth: { storageKey: 'ff-test-' + Math.random(), persistSession: false } });
+  if (email) { const r = await c.auth.signInWithPassword({ email, password: pw }); if (r.error) return { loginError: r.error.message }; }
+  return await (CODE)(c);
+}"""
+async def client(pg, body, email=None, pw=None):
+    return await pg.evaluate(CLIENT.replace("CODE", body), {"email": email, "pw": pw, "code": None})
 
 async def main():
     ts = int(time.time())
@@ -39,62 +68,114 @@ async def main():
         pg.on("console", lambda m: errors.append(m.text) if m.type == "error" and "favicon" not in m.text else None)
         pg.set_default_timeout(45000)
 
-        # ---- hero ----
+        # ================= landing =================
         await pg.goto(BASE, wait_until="networkidle")
-        await pg.wait_for_function("document.querySelector('#statOpen').textContent !== '–'")
-        check("hero stats load from DB", (await pg.inner_text("#statOpen")).isdigit())
-        await shot(pg, "v2_1_hero")
+        await pg.wait_for_timeout(1500)
+        check("hero quick headline + CTAs visible on load", await pg.is_visible("#heroQuick") and "Your PG. Your Proof. Your Deposit Protected." in await pg.inner_text("#heroQuick")
+              and await pg.locator("#heroQuick .btn").count() == 2)
+        body = await pg.inner_text("body")
+        check("no unsourced numbers / placeholder claims", "₹5k" not in body and "typically lost" not in body and "avg. days" not in body)
+        check("3-step flow present", all(t in body for t in ["Move-in evidence", "Complaint tracking", "Deposit protection"]))
+        check("verified facts cite sources", await pg.locator(".why a[href*='mohua.gov.in']").count() == 1 and await pg.locator(".why a[href*='consumerhelpline.gov.in']").count() == 1)
+        hrefs = await pg.eval_on_selector_all("header a[href], footer a[href]", "els => els.map(e => e.getAttribute('href'))")
+        missing = [h for h in hrefs if h.startswith("#") and h != "#top" and not await pg.locator(h).count()]
+        check("all nav anchors resolve", not missing and "/privacy" in hrefs, str(missing))
+        await shot(pg, f"{TAG}_hero")
         await pg.evaluate("window.scrollTo(0, document.querySelector('.hero').offsetHeight*0.55)")
-        await pg.wait_for_timeout(500)
+        await pg.wait_for_timeout(600)
         op = await pg.evaluate("getComputedStyle(document.querySelector('.hero-copy')).opacity")
-        check("scroll reveals headline", float(op) > 0.5, op)
-        await shot(pg, "v2_2_hero_scrolled")
+        check("scroll reveals headline", float(op) > 0.5 and "Protected" in await pg.inner_text(".hero-copy .headline"), op)
+        await shot(pg, f"{TAG}_hero_scrolled")
 
-        # ---- demo ----
-        await pg.click(".hero-actions [data-go=demo]")
+        # privacy page
+        r = await pg.request.get(BASE + "/privacy")
+        ptxt = await r.text()
+        check("/privacy page served", r.status == 200 and "Correction &amp; deletion policy" in ptxt and "Delete my account" in ptxt and "Gemini" in ptxt, r.status)
+
+        # ================= demo =================
+        await pg.goto(BASE, wait_until="networkidle")
+        await pg.click("#heroQuick [data-go=demo]")
         await pg.wait_for_selector("#s-dashboard.active")
-        check("demo dashboard deposit", (await pg.inner_text("#dDeposit")) == "₹20,000")
+        check("demo labelled fictional", "fictional" in (await pg.inner_text("#demoBar")).lower())
+        check("demo deposit prominent", (await pg.inner_text("#dDeposit")) == "₹20,000" and await pg.is_visible(".deposit-hero"))
         check("demo protected ₹4,500", (await pg.inner_text("#dProtected")) == "₹4,500")
-        await pg.evaluate("document.querySelector('#app').scrollIntoView()")
-        await shot(pg, "v2_3_demo_dashboard")
+        check("PG details + last updated shown", "Owner" in await pg.inner_text("#dPg") and "Last updated" in await pg.inner_text("#dUpdated"))
+        check("tabs: PG details, scan, complaints, audit, notices", [t.strip() for t in await pg.eval_on_selector_all(".nav-item .l", "e=>e.map(x=>x.textContent)")] == ["PG details", "Move-in scan", "Complaints", "Deposit audit", "Notices"])
+        await pg.evaluate("window.scrollTo(0, document.querySelector('#appView').getBoundingClientRect().top + scrollY - 76)")
+        await pg.wait_for_timeout(500)
+        await shot(pg, f"{TAG}_dashboard")
         await pg.click(".nav-item[data-screen=scan]")
-        check("demo scan shows locked photos", await pg.locator(".photo .badge.lock").count() == 3)
-        await shot(pg, "v2_4_demo_scan")
+        check("scan areas Bedroom/Bathroom/Walls/Furniture", [re.sub(r"\d", "", t).strip() for t in await pg.eval_on_selector_all(".area", "e=>e.map(x=>x.textContent)")] == ["Bedroom", "Bathroom", "Walls", "Furniture"])
+        check("demo locked photos with hashes", await pg.locator(".photo .badge.lock").count() == 3 and await pg.locator(".photo .hash").count() == 3)
+        check("demo correction note shown", "Correction" in await pg.inner_text(".corrections"))
+        async with pg.expect_download() as dl:
+            await pg.click("#reportBtn")
+        d = await dl.value
+        path = await d.path()
+        check("evidence report PDF downloads", path and os.path.getsize(path) > 5000 and d.suggested_filename.startswith("FixFlow-evidence"), d.suggested_filename)
         await pg.click(".nav-item[data-screen=complaints]")
         txt = await pg.inner_text("#cList")
-        check("demo complaint day counter", "14" in txt and "days unfixed" in txt)
+        check("demo complaint refs + counters", re.search(r"FF-\d{4}-\d{4}", txt) and "days unresolved" in txt)
+        await pg.click("#cList .item:first-child .hist summary")
+        check("status history visible", "In progress" in await pg.inner_text("#cList .item:first-child .hist") and "warden" in await pg.inner_text("#cList .item:first-child .hist"))
         await pg.click(".nav-item[data-screen=claim]")
-        check("demo claim numbers", (await pg.inner_text("#kDispute")) == "₹6,500" and (await pg.inner_text("#kRefund")) == "₹18,500",
+        check("demo audit numbers", (await pg.inner_text("#kDeposit")) == "₹20,000" and (await pg.inner_text("#kDispute")) == "₹6,500" and (await pg.inner_text("#kRefund")) == "₹18,500",
               f"{await pg.inner_text('#kDispute')} {await pg.inner_text('#kRefund')}")
-        check("demo matched photo shown", await pg.locator(".ded.unfair img").count() == 1)
-        await shot(pg, "v2_5_demo_claim")
-        await pg.click(".nav-item[data-screen=notices]")
-        await pg.click("#genBtn")
-        await pg.wait_for_function("document.querySelector('.notice[data-kind=formal] textarea').value.length > 100", timeout=60000)
+        check("demo linked evidence shown", await pg.locator(".ded.unfair img").count() == 1 and "Not legal advice" in await pg.inner_text("#s-claim .disclaimer"))
+        await pg.click(".ded.unclear [data-pos=accept]")
+        check("tenant can accept a charge", (await pg.inner_text("#kDispute")) == "₹4,500" and (await pg.inner_text("#kRefund")) == "₹16,500")
+        await pg.click(".ded.unclear [data-pos='']")
+        check("reset to AI finding", (await pg.inner_text("#kDispute")) == "₹6,500")
+        await pg.evaluate("window.scrollTo(0, document.querySelector('#s-claim').getBoundingClientRect().top + scrollY - 76)")
+        await pg.wait_for_timeout(300)
+        await shot(pg, f"{TAG}_deposit_audit")
+        await pg.click("#toNoticeBtn")
+        await pg.wait_for_selector("#s-notices.active")
+        await pg.wait_for_function("document.querySelector('.notice[data-kind=formal] textarea').value.length > 100", timeout=90000)
         vals = await pg.eval_on_selector_all(".notice textarea", "els=>els.map(e=>e.value)")
-        check("3 AI notices generated", all(len(v) > 40 for v in vals) and re.search(r"6,?500|4,?500", "".join(vals)) is not None, vals[0][:120])
-        await shot(pg, "v2_6_demo_notices")
+        check("dispute notice drafts generated with amounts", all(len(v) > 40 for v in vals) and re.search(r"6,?500|4,?500", "".join(vals)) is not None, vals[1][:100])
+        await pg.click("[data-npv=formal]")
+        await pg.wait_for_selector("#previewDlg[open]")
+        pv = await pg.inner_text("#pvBody")
+        check("preview shows annexes (evidence, refs, amounts)", "annex a" in pv.lower() and bool(re.search(r"FF-\d{4}-\d{4}", pv)) and "₹" in pv, pv[-160:])
+        check("final needs review tick", await pg.is_disabled("#pvFinal"))
+        await pg.check("#pvAgree"); await pg.click("#pvFinal")
+        await pg.wait_for_function("document.querySelector('#pvState').textContent.startsWith('Final')")
+        async with pg.expect_download() as dl:
+            await pg.click("#pvPdf")
+        d = await dl.value
+        check("notice PDF downloads", os.path.getsize(await d.path()) > 2000, d.suggested_filename)
+        await pg.click("#pvClose")
         async with pg.expect_download() as dl:
             await pg.click("#pdfBtn")
         d = await dl.value
-        path = await d.path()
-        check("PDF downloads", path and os.path.getsize(path) > 2000, d.suggested_filename)
+        check("full pack PDF downloads", os.path.getsize(await d.path()) > 2000)
+        await pg.click("#accountBtn")
+        async with pg.expect_download() as dl:
+            await pg.click("#exportBtn")
+        d = await dl.value
+        dj = json.load(open(await d.path()))
+        check("demo export JSON", "Demo" in dj.get("note", "") and len(dj["complaints"]) == 3)
         await pg.click("#demoBar [data-go=signup]")
         await pg.wait_for_selector("#authView:not([hidden])")
         check("exit demo -> sign up", await pg.is_visible("#aName"))
 
-        # ---- Google button opens Firebase OAuth ----
-        async with pg.expect_popup() as popup_info:
+        # ---- google button ----
+        gs = await pg.evaluate("fetch(FF_CONFIG.SUPABASE_URL + '/auth/v1/settings', {headers:{apikey: FF_CONFIG.SUPABASE_ANON_KEY}}).then(r=>r.json()).then(j=>!!j.external.google)")
+        if gs:
+            async with pg.expect_request(lambda r: "/auth/v1/authorize" in r.url and "provider=google" in r.url, timeout=15000) as rq:
+                await pg.click("#googleBtn")
+            check("google button starts OAuth", "redirect_to" in (await rq.value).url)
+            await pg.goto(BASE, wait_until="networkidle")
+        else:
             await pg.click("#googleBtn")
-        popup = await popup_info.value
-        await popup.wait_for_load_state()
-        check("Google button opens Firebase OAuth", "google.com" in popup.url or "/__/auth/handler" in popup.url, popup.url)
-        await popup.close()
-        await pg.goto(BASE, wait_until="networkidle")
+            await pg.wait_for_function("document.querySelector('#aErr').textContent.length > 0")
+            check("google button explains provider is off", "isn't switched on" in await pg.inner_text("#aErr"), "provider disabled")
         await pg.evaluate("document.querySelector('#app').scrollIntoView()")
         await pg.wait_for_selector("#authView:not([hidden])")
 
-        # ---- sign up user A ----
+        # ================= live user A =================
+        await pg.click(".seg-btn[data-auth=signup]")
         await pg.click("#aSubmit")
         check("signup validation", "name" in (await pg.inner_text("#aErr")).lower())
         await pg.fill("#aName", "Tester A"); await pg.fill("#aEmail", email_a); await pg.fill("#aPass", pw)
@@ -111,96 +192,164 @@ async def main():
         check("PG saved -> scan", True)
 
         # ---- scan ----
+        await pg.set_input_files("#photoInput", files=[{"name": "notes.txt", "mimeType": "text/plain", "buffer": b"not an image"}])
+        await pg.wait_for_function("document.querySelector('#scanErr').textContent.length > 0")
+        check("file type validation", "JPEG, PNG or WebP" in await pg.inner_text("#scanErr"))
+        await pg.set_input_files("#photoInput", files=[{"name": "big.jpg", "mimeType": "image/jpeg", "buffer": b"\xff\xd8" + b"0" * (10 * 1024 * 1024 + 10)}])
+        await pg.wait_for_function("document.querySelector('#scanErr').textContent.includes('10 MB')")
+        check("file size validation (10 MB)", True)
+        await pg.click(".area[data-area=wall]")
         await pg.set_input_files("#photoInput", IMG)
-        await pg.wait_for_selector(".photo", timeout=60000)
+        await pg.wait_for_selector("#scanReview:not([hidden])")
+        rv = await pg.inner_text("#rvMeta")
+        check("review step shows client SHA-256", IMG_SHA in rv, rv[-80:])
+        check("nothing saved before review", await pg.locator(".photo").count() == 0)
+        await pg.click("#rvSave")
+        await pg.wait_for_selector(".photo", timeout=90000)
         tags = await pg.locator(".photo .tag").count()
-        check("photo uploaded + AI tags", tags > 0, f"{tags} tags")
-        await pg.click(".area[data-area=bathroom]")
+        check("photo uploaded + Gemini description", tags > 0 and len(await pg.input_value(".photo textarea")) > 20, f"{tags} tags")
+        row = await client(pg, f"async c => (await c.from('ff_photos').select('file_sha256,file_bytes,file_type,area').single()).data", email_a, pw)
+        check("SHA-256 stored in DB matches file", row and row["file_sha256"] == IMG_SHA and row["file_bytes"] == os.path.getsize(IMG) and row["area"] == "wall", str(row)[:120])
+        await pg.fill(".photo textarea", "Damp patch near the window, roughly 20 cm wide (edited before lock).")
+        await pg.click(".photo [data-sumsave]")
+        await pg.wait_for_function("document.querySelector('.photo textarea').value.includes('edited before lock')")
+        check("edit description before lock", True)
         await pg.set_input_files("#photoInput", IMG)
-        await pg.wait_for_function("document.querySelectorAll('.photo').length === 2", timeout=60000)
+        await pg.wait_for_function("document.querySelector('#scanErr').textContent.includes('already')")
+        check("duplicate photo rejected", True)
+        await pg.click(".area[data-area=bathroom]")
+        await pg.set_input_files("#photoInput", IMG2)
+        await pg.wait_for_selector("#scanReview:not([hidden])")
+        await pg.click("#rvSave")
+        await pg.wait_for_function("document.querySelectorAll('.photo').length === 2", timeout=90000)
         await pg.click(".photo [data-del]")
         await pg.wait_for_function("document.querySelectorAll('.photo').length === 1")
         check("remove before lock", True)
-        await pg.click("#lockBtn"); await pg.click("#lockConfirm")
+        await pg.click("#lockBtn")
+        check("lock needs confirmation tick", await pg.is_disabled("#lockConfirm"))
+        await pg.check("#lockAgree"); await pg.click("#lockConfirm")
         await pg.wait_for_selector(".photo .badge.lock")
         check("lock record", "Locked" in await pg.inner_text(".photo"))
-        photo_id_a = await pg.locator("#photoGrid .photo").first.get_attribute("data-id")
-        await shot(pg, "v2_7_scan")
-        tamper = await pg.evaluate("""async () => {
-            const [appApi, authApi, dbApi] = await Promise.all([
-                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
-                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
-                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js')
-            ]);
-            const app = appApi.initializeApp(FF_CONFIG.FIREBASE_CONFIG, `RulesTestA-${Date.now()}`);
-            const auth = authApi.getAuth(app);
-            await authApi.signInWithEmailAndPassword(auth, '%s', '%s');
-            const db = dbApi.getFirestore(app);
-            const photos = await dbApi.getDocs(dbApi.query(dbApi.collection(db, 'photos'), dbApi.where('owner', '==', auth.currentUser.uid)));
-            const photo = photos.docs.find(x => x.data().locked);
-            const ref = dbApi.doc(db, 'photos', photo.id);
-            let updateDenied = false, deleteDenied = false;
-            try { await dbApi.updateDoc(ref, { ai_summary: 'hacked' }); } catch { updateDenied = true; }
-            try { await dbApi.deleteDoc(ref); } catch { deleteDenied = true; }
-            const after = await dbApi.getDoc(ref);
-            const result = { updateDenied, deleteDenied, summary: after.data().ai_summary };
-            await appApi.deleteApp(app);
-            return result;
-        }""" % (email_a, pw))
-        check("locked photo is read-only in Firestore", tamper["updateDenied"] and tamper["deleteDenied"] and tamper["summary"] != "hacked", str(tamper))
+        await pg.click(".photo .add-note summary")
+        await pg.fill(".photo [data-note]", "Correction: the patch is near the door, not the window.")
+        await pg.click(".photo [data-notesave]")
+        await pg.wait_for_selector(".photo .corrections")
+        check("correction added as dated note", "near the door" in await pg.inner_text(".photo .corrections"))
+        ok_hist = await soft("evidence history shows lock + correction", pg.wait_for_function("(t => t.includes('Locked') && t.toLowerCase().includes('correction'))(document.querySelector('#evHistory').textContent)", timeout=15000))
+        if ok_hist is not None: check("evidence history shows lock + correction", True)
+        async with pg.expect_download() as dl:
+            await pg.click("#reportBtn")
+        d = await dl.value
+        check("live evidence report PDF", os.path.getsize(await d.path()) > 5000)
+        await shot(pg, f"{TAG}_scan")
+        tamper = await client(pg, """async c => {
+            const { data } = await c.from('ff_photos').select('id, photo_url, storage_path').limit(1);
+            const id = data[0].id;
+            const u = await c.from('ff_photos').update({ ai_summary: 'hacked', file_sha256: '0'.repeat(64) }).eq('id', id);
+            const d = await c.from('ff_photos').delete().eq('id', id);
+            const after = await c.from('ff_photos').select('ai_summary, file_sha256').eq('id', id).single();
+            const n = await c.from('ff_evidence_notes').select('id').limit(1);
+            const nu = await c.from('ff_evidence_notes').update({ note: 'changed' }).eq('id', n.data[0].id).select();
+            const nd = await c.from('ff_evidence_notes').delete().eq('id', n.data[0].id).select();
+            const rm = await c.storage.from('ff-photos').remove([data[0].storage_path]);
+            const still = await fetch(data[0].photo_url, { method: 'HEAD' });
+            const al = await c.from('ff_audit_log').insert({ owner: (await c.auth.getUser()).data.user.id, action: 'fake', entity: 'x' });
+            return { u: u.error && u.error.message, d: d.error && d.error.message, summary: after.data.ai_summary, sha: after.data.file_sha256,
+                     noteEdit: (nu.data || []).length, noteDel: (nd.data || []).length, removed: (rm.data || []).length, fileStill: still.status, auditInsert: !!al.error };
+        }""", email_a, pw)
+        check("locked photo + hash read-only in DB", tamper and tamper["u"] and tamper["d"] and tamper["summary"] != "hacked" and tamper["sha"] == IMG_SHA, str(tamper)[:200])
+        check("corrections can't be edited/deleted", tamper and tamper["noteEdit"] == 0 and tamper["noteDel"] == 0)
+        check("locked photo file can't be deleted from storage", tamper and tamper["removed"] == 0 and tamper["fileStill"] == 200, str(tamper and (tamper["removed"], tamper["fileStill"])))
+        check("audit log is not writable by users", tamper and tamper["auditInsert"])
 
         # ---- complaints ----
         await pg.click(".nav-item[data-screen=complaints]")
         await pg.fill("#cText", "wifi bahut slow hai aur raat ko band ho jata hai")
         await pg.click("#cAnalyze")
         await pg.wait_for_selector("#cBody:not([hidden])", timeout=60000)
-        check("AI categorises (Wi-Fi)", (await pg.inner_text("#rCat")) == "Wi-Fi", await pg.inner_text("#rCat"))
+        check("AI suggests category (Wi-Fi)", (await pg.input_value("#rCatSel")) == "Wi-Fi", await pg.input_value("#rCatSel"))
         check("not offline fallback", await pg.is_hidden("#rMode"))
+        await pg.fill("#rDesc", "Wi-Fi is very slow and disconnects every night (edited by me).")
         await pg.wait_for_selector("#similar:not([hidden])", timeout=10000)
         await pg.click("#similar [data-support]")
         await pg.wait_for_selector("#similar button:has-text('Added')")
         check("+1 on similar PG issue", True)
-        await shot(pg, "v2_8_complaint_ai")
+        await pg.set_input_files("#cPhoto", IMG2)
+        await shot(pg, f"{TAG}_complaint_ai")
         await pg.click("#cSave")
         await pg.wait_for_selector("#cList .item")
-        complaint_id_a = await pg.locator("#cList .item").first.get_attribute("data-id")
-        check("complaint logged with counter", "0" in await pg.inner_text("#cList .days") and "unfixed" in await pg.inner_text("#cList .days"))
+        first = await pg.inner_text("#cList .item")
+        ref_a = (re.search(r"FF-\d{4}-\d{4,}", first) or [None])[0]
+        check("complaint gets unique ref ID", ref_a is not None, ref_a)
+        check("edited description saved + photo attached", "(edited by me)" in first and await pg.locator("#cList .item .thumb").count() == 1)
+        check("submission + last-updated dates", "Submitted" in first and "Last updated" in first)
         await pg.fill("#cText", "Geyser not working since 2 days, only cold water")
         await pg.click("#cAnalyze"); await pg.wait_for_selector("#cBody:not([hidden])", timeout=60000)
         await pg.click("#cSave"); await pg.wait_for_function("document.querySelectorAll('#cList .item').length === 2")
-        await pg.click("#cList [data-fix]")
+        refs = re.findall(r"FF-\d{4}-\d{4,}", await pg.inner_text("#cList"))
+        check("refs unique", len(set(refs)) == 2, str(refs))
+        await pg.click("#cList .item:first-child [data-status=in_progress]")
+        await pg.wait_for_function("document.querySelector('#cList .item:first-child .badge.in_progress')")
+        await pg.click("#cList .item:first-child [data-reply]")
+        await pg.fill("#cList .item:first-child .reply textarea", "Warden said the plumber comes Friday")
+        await pg.select_option("#cList .item:first-child .reply select", "fixed")
+        await pg.click("#cList .item:first-child .reply button[type=submit]")
         await pg.wait_for_selector("#cList .days.done")
-        check("mark fixed", True)
+        await pg.click("#cList .item:has(.days.done) .hist summary")
+        hist = await pg.inner_text("#cList .item:has(.days.done) .hist")
+        check("status history: created → in progress → reply → resolved", all(s in hist for s in ["Logged as Open", "Open → In progress", "plumber comes Friday", "In progress → Resolved"]), hist[:200])
         await pg.select_option("#fStatus", "fixed")
-        check("status filter", await pg.locator("#cList .item").count() == 1)
+        check("status filter (Resolved)", await pg.locator("#cList .item").count() == 1)
         await pg.select_option("#fStatus", "")
-        await shot(pg, "v2_9_complaints")
+        await shot(pg, f"{TAG}_complaints")
 
-        # ---- claim ----
+        # ---- deposit audit ----
         await pg.click(".nav-item[data-screen=claim]")
-        await pg.fill("#dReason", "Wall repainting and repair for stains and marks"); await pg.fill("#dAmount", "4000")
+        check("audit shows original deposit", (await pg.inner_text("#kDeposit")) == "₹18,000")
+        await pg.fill("#dReason", "Wall repainting and repair for damp patch and marks"); await pg.fill("#dAmount", "4000")
         await pg.click("#dAdd")
-        await pg.wait_for_selector(".ded .verdict:not(.pending)", timeout=60000)
+        await pg.wait_for_selector(".ded .verdict:not(.pending)", timeout=90000)
         v1 = await pg.inner_text(".ded .verdict")
-        check("deduction audited by AI", v1.lower() in ("unfair deduction", "unclear — needs proof", "fair deduction"), v1)
+        check("deduction audited", v1.lower() in ("unsupported by evidence", "unclear: ask for proof", "looks fair"), v1)
         await pg.fill("#dReason", "Room cleaning charge at move-out"); await pg.fill("#dAmount", "800")
         await pg.click("#dAdd")
-        await pg.wait_for_function("document.querySelectorAll('.ded .verdict:not(.pending)').length === 2", timeout=60000)
-        total = await pg.inner_text("#kTotal"); disp = await pg.inner_text("#kDispute"); ref = await pg.inner_text("#kRefund")
-        n = lambda s: int(re.sub(r"\D", "", s) or 0)
-        check("claim math consistent", n(total) == 4800 and n(disp) <= 4800 and n(ref) <= 18000 and n(ref) >= 18000 - 4800, f"{total} {disp} {ref}")
-        await shot(pg, "v2_10_claim")
+        await pg.wait_for_function("document.querySelectorAll('.ded .verdict:not(.pending)').length === 2", timeout=90000)
+        total, disp, ref = await pg.inner_text("#kTotal"), await pg.inner_text("#kDispute"), await pg.inner_text("#kRefund")
+        check("audit math consistent", N(total) == 4800 and N(disp) <= 4800 and 18000 - 4800 <= N(ref) <= 18000 and N(ref) == 18000 - (4800 - N(disp)), f"{total} {disp} {ref}")
+        await pg.click(".ded:first-child [data-pos=dispute]")
+        await pg.wait_for_function("document.querySelector('.ded:first-child [data-pos=dispute]').getAttribute('aria-pressed') === 'true'")
+        check("tenant position saved", N(await pg.inner_text("#kDispute")) >= 4000)
+        await shot(pg, f"{TAG}_claim_live")
 
         # ---- notices ----
-        await pg.click(".nav-item[data-screen=notices]")
-        if n(disp) > 0:
-            await pg.click("#genBtn")
-            await pg.wait_for_function("document.querySelector('.notice[data-kind=grievance] textarea').value.length > 80", timeout=60000)
-            await pg.fill(".notice[data-kind=whatsapp] textarea", "Edited WhatsApp draft for test purposes.")
-            await pg.click("[data-nsave=whatsapp]")
-            check("notices generated + edit saved", True)
-        else:
-            check("notices generated + edit saved", True, "skipped: nothing disputed")
+        await pg.click("#toNoticeBtn")
+        await pg.wait_for_function("document.querySelector('.notice[data-kind=grievance] textarea').value.length > 80", timeout=90000)
+        await pg.fill(".notice[data-kind=whatsapp] textarea", "Edited WhatsApp draft for test purposes.")
+        await pg.click("[data-nsave=whatsapp]")
+        await pg.wait_for_function("document.querySelector('.notice[data-kind=whatsapp] small').textContent.includes('Draft saved')")
+        check("notice edited + saved", True)
+        await pg.click("[data-npv=formal]")
+        await pg.wait_for_selector("#previewDlg[open]")
+        check("live preview includes complaint ref", ref_a in await pg.inner_text("#pvBody"))
+        await pg.check("#pvAgree"); await pg.click("#pvFinal")
+        await pg.wait_for_function("document.querySelector('#pvState').textContent.startsWith('Final')")
+        async with pg.expect_download() as dl:
+            await pg.click("#pvPdf")
+        check("final notice PDF", os.path.getsize(await (await dl.value).path()) > 2000)
+        await pg.click("#pvClose")
+        check("final notice is read-only until reopened", await pg.get_attribute(".notice[data-kind=formal] textarea", "readonly") is not None)
+
+        # ---- privacy & data ----
+        await pg.click("#accountBtn")
+        await pg.wait_for_function("document.querySelectorAll('#auditList li').length > 8", timeout=15000)
+        al = await pg.inner_text("#auditList")
+        check("audit log lists actions", all(s in al for s in ["Locked", "correction", "Logged complaint", "Marked formal notice final"]), al[:200])
+        async with pg.expect_download() as dl:
+            await pg.click("#exportBtn")
+        ex = json.load(open(await (await dl.value).path()))
+        check("data export JSON complete", ex["user"]["email"] == email_a and ex["photos"][0]["file_sha256"] == IMG_SHA and len(ex["complaints"]) == 2
+              and len(ex["complaint_events"]) >= 5 and len(ex["evidence_notes"]) == 1 and len(ex["audit_log"]) > 8 and len(ex["notices"]) == 3)
+        await shot(pg, f"{TAG}_account")
 
         # ---- persistence ----
         await pg.click("#signOutBtn")
@@ -214,40 +363,43 @@ async def main():
         await pg.wait_for_selector("#s-dashboard.active")
         check("login restores data", (await pg.inner_text("#dDeposit")) == "₹18,000" and (await pg.inner_text("#dPhotos")).startswith("1"))
         await pg.click(".nav-item[data-screen=notices]")
-        if n(disp) > 0:
-            check("edited notice persisted", "Edited WhatsApp" in await pg.input_value(".notice[data-kind=whatsapp] textarea"))
+        check("edited + final notices persisted", "Edited WhatsApp" in await pg.input_value(".notice[data-kind=whatsapp] textarea") and "Final since" in await pg.inner_text(".notice[data-kind=formal] small"))
         await pg.click("#signOutBtn"); await pg.wait_for_selector("#authView:not([hidden])")
 
         # ---- isolation: user B sees nothing of A ----
         await pg.click(".seg-btn[data-auth=signup]")
         await pg.fill("#aName", "Tester B"); await pg.fill("#aEmail", email_b); await pg.fill("#aPass", pw)
         await pg.click("#aSubmit"); await pg.wait_for_selector("#s-setup.active")
-        leak = await pg.evaluate("""async (ids) => {
-            const [appApi, authApi, dbApi] = await Promise.all([
-                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js'),
-                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js'),
-                import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js')
-            ]);
-            const app = appApi.initializeApp(FF_CONFIG.FIREBASE_CONFIG, `RulesTestB-${Date.now()}`);
-            const auth = authApi.getAuth(app);
-            await authApi.signInWithEmailAndPassword(auth, '%s', '%s');
-            const db = dbApi.getFirestore(app);
-            const ownComplaints = await dbApi.getDocs(dbApi.query(dbApi.collection(db, 'complaints'), dbApi.where('owner', '==', auth.currentUser.uid)));
-            const ownPhotos = await dbApi.getDocs(dbApi.query(dbApi.collection(db, 'photos'), dbApi.where('owner', '==', auth.currentUser.uid)));
-            let complaintDenied = false, photoDenied = false;
-            try { await dbApi.getDoc(dbApi.doc(db, 'complaints', ids.complaint)); } catch { complaintDenied = true; }
-            try { await dbApi.getDoc(dbApi.doc(db, 'photos', ids.photo)); } catch { photoDenied = true; }
-            const anonApp = appApi.initializeApp(FF_CONFIG.FIREBASE_CONFIG, `RulesTestAnon-${Date.now()}`);
-            const anonDb = dbApi.getFirestore(anonApp);
-            let anonDenied = false;
-            try { await dbApi.getDoc(dbApi.doc(anonDb, 'complaints', ids.complaint)); } catch { anonDenied = true; }
-            const result = { own: ownComplaints.size === 0 && ownPhotos.size === 0, complaintDenied, photoDenied, anonDenied };
-            await appApi.deleteApp(app);
-            await appApi.deleteApp(anonApp);
-            return result;
-        }""" % (email_b, pw), {"complaint": complaint_id_a, "photo": photo_id_a})
-        check("Firestore rules isolate private tenant data", leak["own"] and leak["complaintDenied"] and leak["photoDenied"] and leak["anonDenied"], str(leak))
-        await pg.click("#signOutBtn")
+        leak = await client(pg, """async c => {
+            const cnt = async (t) => ((await c.from(t).select('*')).data || []).length;
+            const out = {};
+            for (const t of ['ff_tenancies','ff_photos','ff_evidence_notes','ff_complaints','ff_complaint_events','ff_deductions','ff_notices','ff_audit_log']) out[t] = await cnt(t);
+            return out;
+        }""", email_b, pw)
+        anon = await client(pg, """async c => {
+            const out = {};
+            for (const t of ['ff_tenancies','ff_photos','ff_evidence_notes','ff_complaints','ff_complaint_events','ff_deductions','ff_notices','ff_audit_log']) out[t] = ((await c.from(t).select('*')).data || []).length;
+            return out;
+        }""")
+        check("RLS: other user sees no private rows", leak and sum(leak.values()) == 0, str(leak))
+        check("RLS: anon sees no private rows", anon and sum(anon.values()) == 0, str(anon))
+
+        # ---- delete account (user B) ----
+        await pg.fill("#fPg", "Temp PG"); await pg.fill("#fRoom", "1"); await pg.fill("#fRent", "5000"); await pg.fill("#fDep", "10000"); await pg.fill("#fIn", "2026-09-01")
+        await pg.click("#pgSave"); await pg.wait_for_selector("#s-scan.active")
+        await pg.set_input_files("#photoInput", IMG2); await pg.wait_for_selector("#scanReview:not([hidden])"); await pg.click("#rvSave")
+        await pg.wait_for_selector(".photo", timeout=90000)
+        await pg.click("#lockBtn"); await pg.check("#lockAgree"); await pg.click("#lockConfirm"); await pg.wait_for_selector(".photo .badge.lock")
+        b_url = await pg.get_attribute(".photo img", "src")
+        await pg.click("#accountBtn")
+        check("delete needs typed confirmation", await pg.is_disabled("#deleteBtn"))
+        await pg.fill("#delConfirm", "DELETE")
+        await pg.click("#deleteBtn")
+        await pg.wait_for_selector("#authView:not([hidden])", timeout=30000)
+        gone = await client(pg, "async c => 1", email_b, pw)
+        folder = b_url.split("/ff-photos/")[1].split("/")[0]
+        left = await client(pg, f"async c => ((await c.storage.from('ff-photos').list('{folder}')).data || []).length")
+        check("account deletion removes login + locked evidence file", gone and "loginError" in gone and left == 0, f"{gone} files_left={left}")
 
         # ---- warden ----
         await pg.evaluate("document.querySelector('#warden').scrollIntoView()")
@@ -257,29 +409,45 @@ async def main():
         await pg.fill("#wPin", "1234"); await pg.click("#wGo")
         await pg.wait_for_selector("#wBoard:not([hidden])")
         wl = await pg.inner_text("#wList")
-        check("warden sees tester complaint", "Tester A" in wl)
-        first = await pg.inner_text("#wList .item .badges")
-        check("warden list sorted (open High first)", "High" in first and "Open" in first, first)
-        await pg.click("#wList [data-s=in_progress]")
-        await pg.wait_for_function("document.querySelector('#wStats .stat:nth-child(2) b').textContent !== '0'")
-        check("warden start work", True)
-        await shot(pg, "v2_11_warden")
+        check("warden sees tester complaint with ref", "Tester A" in wl and ref_a in wl)
+        firstb = await pg.inner_text("#wList .item .badges")
+        check("warden list sorted (open High first)", "High" in firstb and "Open" in firstb, firstb)
+        item = pg.locator("#wList .item", has_text=ref_a)
+        await item.locator(".w-note").fill("Router reset done, monitoring tonight")
+        await item.locator("[data-s=fixed]").click()
+        await pg.wait_for_function(f"[...document.querySelectorAll('#wList .item')].some(e => e.textContent.includes('{ref_a}') && e.querySelector('.days.done'))")
+        ev = await client(pg, f"""async c => {{
+            const cm = (await c.from('ff_complaints').select('id').eq('ref', '{ref_a}').single()).data;
+            return (await c.from('ff_complaint_events').select('kind,actor,note,to_status').eq('complaint_id', cm.id)).data;
+        }}""", email_a, pw)
+        check("warden change logged to resident history", ev and any(e["actor"] == "warden" and e["to_status"] == "fixed" and "Router reset" in (e["note"] or "") for e in ev), str(ev)[:200])
+        await shot(pg, f"{TAG}_warden")
 
-        # ---- mobile ----
-        m = await b.new_page(viewport={"width": 390, "height": 844})
+        # ================= mobile =================
+        m = await b.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
         await m.goto(BASE, wait_until="networkidle")
-        await shot(m, "v2_12_mobile_hero")
-        await m.click(".hero-actions [data-go=demo]")
+        await m.wait_for_timeout(1200)
+        ov0 = await m.evaluate("document.documentElement.scrollWidth - innerWidth")
+        check("mobile hero CTAs visible, no overflow", await m.is_visible("#heroQuick .btn.primary") and ov0 <= 1, ov0)
+        await shot(m, f"{TAG}_mobile_hero")
+        await m.click("#heroQuick [data-go=demo]")
         await m.wait_for_selector("#s-dashboard.active")
         ov = await m.evaluate("document.documentElement.scrollWidth - innerWidth")
-        check("mobile no horizontal overflow", ov <= 1, ov)
+        check("mobile dashboard no horizontal overflow", ov <= 1, ov)
         check("mobile bottom nav", (await m.evaluate("getComputedStyle(document.querySelector('.side')).position")) == "fixed")
-        await m.wait_for_timeout(1200); await m.evaluate("document.querySelector('#app').scrollIntoView()"); await m.wait_for_timeout(800)
-        await shot(m, "v2_13_mobile_app")
-        await m.click(".nav-item[data-screen=claim]")
-        ov2 = await m.evaluate("document.documentElement.scrollWidth - innerWidth")
-        check("mobile claim no overflow", ov2 <= 1, ov2)
-        await shot(m, "v2_14_mobile_claim")
+        await m.wait_for_timeout(1200); await m.evaluate("window.scrollTo(0, document.querySelector('#s-dashboard .screen-head').getBoundingClientRect().top + scrollY - 70)"); await m.wait_for_timeout(800)
+        await shot(m, f"{TAG}_mobile")
+        bad_ov = []
+        for scr in ["scan", "complaints", "claim", "notices"]:
+            await m.click(f".nav-item[data-screen={scr}]")
+            await m.wait_for_timeout(300)
+            o = await m.evaluate("document.documentElement.scrollWidth - innerWidth")
+            if o > 1: bad_ov.append((scr, o))
+        check("mobile screens no overflow", not bad_ov, str(bad_ov))
+        await shot(m, f"{TAG}_mobile_notices")
+        t = await b.new_page(viewport={"width": 820, "height": 1180})
+        await t.goto(BASE + "/privacy", wait_until="networkidle")
+        check("privacy page renders on tablet", "Correction & deletion policy" in await t.inner_text("#policy") and await t.evaluate("document.documentElement.scrollWidth - innerWidth") <= 1)
 
         bad = [e for e in errors if "Failed to load resource" not in e]
         check("no console errors", not bad, "; ".join(bad[:3]))
