@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FixFlow · Report it. Track it. Prove it.</title>
-  <meta name="description" content="FixFlow protects PG and hostel tenants: timestamped move-in proof, complaints with live unfixed-day counters, AI deduction audits and refund notices." />
+  <title>FixFlow · Your PG. Your Proof. Your Deposit Protected.</title>
+  <meta name="description" content="FixFlow protects PG and hostel tenants: fingerprinted move-in evidence, complaints with reference IDs and status history, AI deduction audits and dispute notices." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -12,12 +12,14 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <a class="skip" href="#app">Skip to app</a>
   <header class="nav" id="nav">
-    <a href="#top" class="brand">FIXFLOW</a>
+    <a href="#top" class="brand" aria-label="FixFlow home">FIXFLOW</a>
     <nav class="pills" aria-label="Sections">
       <a href="#how" class="pill">How it works</a>
       <a href="#app" class="pill">App</a>
       <a href="#warden" class="pill">For wardens</a>
+      <a href="/privacy" class="pill">Privacy</a>
     </nav>
     <a href="#app" class="cta" id="navCta" data-go="signup">Get started</a>
   </header>
@@ -35,19 +37,28 @@
       <img class="layer palm palm-tr" src="img/palm.webp" alt="" aria-hidden="true" />
       <div class="layer whiteout"></div>
 
+      <div class="hero-quick" id="heroQuick">
+        <p>Your PG. Your Proof. Your Deposit Protected.</p>
+        <div class="hero-actions">
+          <a href="#app" class="btn primary" data-go="signup">Protect my deposit</a>
+          <a href="#app" class="btn glass" data-go="demo">Try the demo</a>
+        </div>
+      </div>
+
       <div class="hero-copy">
         <p class="eyebrow">PG &amp; Hostel Living · Bengaluru</p>
-        <h2 class="headline">Where every complaint<br />gets <b>fixed</b></h2>
-        <p class="sub">Lock timestamped move-in photos, log every unfixed issue with a live day counter, and let AI turn your evidence into a firm deposit-refund notice.</p>
+        <h2 class="headline">Your PG. Your Proof.<br />Your Deposit <b>Protected.</b></h2>
+        <p class="tagline">Report it. Track it. Prove it.</p>
+        <p class="sub">Lock fingerprinted move-in photos, track every complaint with a reference ID and status history, and check each deposit deduction against your own evidence.</p>
         <div class="hero-actions">
           <a href="#app" class="btn primary" data-go="signup">Protect my deposit</a>
           <a href="#app" class="btn ghost" data-go="demo">Try the demo</a>
         </div>
-        <div class="live">
-          <span><b id="statOpen">–</b> open</span>
-          <span><b id="statFixed">–</b> fixed</span>
-          <span><b id="statAvg">–</b> avg. days to fix</span>
-        </div>
+        <ul class="facts" aria-label="What FixFlow does">
+          <li><b>SHA-256</b> fingerprint on every move-in photo</li>
+          <li><b>Read-only</b> evidence once you lock it</li>
+          <li><b>FF-ref</b> ID and history for every complaint</li>
+        </ul>
       </div>
       <div class="scroll-hint">Scroll</div>
     </div>
@@ -57,17 +68,29 @@
   <section class="how-wrap" id="how">
     <div class="wrap">
       <p class="eyebrow">How it works</p>
-      <h2 class="sec-title">Three steps from check-in day to full refund</h2>
-      <p class="sec-sub">No legal jargon. Just dated evidence you control.</p>
-      <div class="how">
-        <div class="how-card"><span>01</span><h3>Scan at move-in</h3><p>Photograph the bed, wall, bathroom, wardrobe and floor. Gemini tags pre-existing stains and loose fittings, then you lock the record with a server timestamp.</p></div>
-        <div class="how-card"><span>02</span><h3>Log problems</h3><p>Report Wi-Fi, water, food or hygiene issues by voice or text in any language. AI sorts and drafts them, and every open issue counts the days it stays unfixed.</p></div>
-        <div class="how-card"><span>03</span><h3>Claim your deposit</h3><p>Enter the owner's deductions. AI checks each one against your locked photos and writes WhatsApp, formal and consumer-helpline notices.</p></div>
-      </div>
+      <h2 class="sec-title">Three steps from check-in day to your refund</h2>
+      <p class="sec-sub">No legal jargon. Dated evidence that you control.</p>
+      <ol class="how">
+        <li class="how-card"><span>01</span><h3>Move-in evidence</h3><p>Photograph your bedroom, bathroom, walls and furniture. Review each photo, let Gemini describe existing damage, then lock the set. Every file gets a server timestamp and a SHA-256 fingerprint.</p></li>
+        <li class="how-card"><span>02</span><h3>Complaint tracking</h3><p>Report issues by voice or text in English, Hindi or Hinglish. Each complaint gets an FF reference ID, a status (Open, In progress, Resolved) and a dated history of every update.</p></li>
+        <li class="how-card"><span>03</span><h3>Deposit protection</h3><p>Enter each deduction the owner claims. FixFlow checks it against your locked photos and complaint history, flags unsupported charges, totals what you can dispute and drafts the notice.</p></li>
+      </ol>
       <div class="why">
-        <div><b>₹5k–15k</b><span>typically lost to vague "repainting" or "repair" deductions</span></div>
-        <div><b>Read-only</b><span>locked photos can't be edited or deleted, even by you</span></div>
-        <div><b>3 notices</b><span>escalating drafts, ready to copy, WhatsApp or download as PDF</span></div>
+        <div>
+          <b>Model Tenancy Act, 2021</b>
+          <span>Proposes that a residential deposit should not exceed two months' rent and be refunded when the landlord takes back the vacant premises, after due deductions. It is a model law: it applies only where your state adopts it.
+          <a href="https://mohua.gov.in/upload/whatsnew/60b7acb90a086Model-Tenancy-Act-English-02.06.2021.pdf" target="_blank" rel="noopener noreferrer">Read section 11 (MoHUA)</a></span>
+        </div>
+        <div>
+          <b>National Consumer Helpline</b>
+          <span>Call 1915 (8 AM to 8 PM) or file online to register a grievance about a deficient service.
+          <a href="https://consumerhelpline.gov.in/" target="_blank" rel="noopener noreferrer">consumerhelpline.gov.in</a></span>
+        </div>
+        <div>
+          <b>Evidence you can't quietly change</b>
+          <span>Locked photos are read-only in the database, even for you. Corrections are added as new dated notes, and every action is written to your audit log.
+          <a href="/privacy#policy">Correction &amp; deletion policy</a></span>
+        </div>
       </div>
     </div>
   </section>
@@ -80,12 +103,13 @@
         <div class="auth-pitch">
           <p class="eyebrow">Your proof folder</p>
           <h2>Start before you unpack.</h2>
-          <p>Create a free account to save your PG details, lock move-in photos and keep every complaint on record. Or explore a finished record first.</p>
+          <p>Create a free account to save your PG details, lock move-in photos and keep every complaint on record. Or explore a sample record first.</p>
           <div class="demo-card">
-            <img src="img/demo/wall.webp" alt="Demo move-in wall photo with a damp stain" />
+            <img src="img/demo/wall.webp" alt="Sample move-in wall photo with a damp stain" />
             <div>
-              <b>Riya's Room 204 · Sunrise PG, Koramangala</b>
-              <span>₹20,000 deposit · an unfair ₹4,500 wall charge caught by AI</span>
+              <span class="demo-badge">Demo · fictional data</span>
+              <b>Riya's Room 204 · Sunrise PG</b>
+              <span>A sample ₹20,000 deposit with one unsupported ₹4,500 wall charge</span>
               <button class="btn small primary" type="button" data-go="demo">Open interactive demo</button>
             </div>
           </div>
@@ -103,16 +127,17 @@
           <form id="authForm" novalidate>
             <div class="signup-only">
               <label class="lbl" for="aName">Full name</label>
-              <input id="aName" autocomplete="name" placeholder="Aditya Kumar" />
+              <input id="aName" autocomplete="name" placeholder="Your name" />
               <label class="lbl" for="aPhone">Phone (optional)</label>
-              <input id="aPhone" autocomplete="tel" placeholder="+91 98xxxxxx10" />
+              <input id="aPhone" autocomplete="tel" placeholder="+91 …" />
             </div>
             <label class="lbl" for="aEmail">Email</label>
             <input id="aEmail" type="email" autocomplete="email" placeholder="you@example.com" />
             <label class="lbl" for="aPass">Password</label>
             <input id="aPass" type="password" autocomplete="current-password" placeholder="At least 6 characters" />
-            <p class="error" id="aErr"></p>
+            <p class="error" id="aErr" role="alert"></p>
             <button class="btn primary full" id="aSubmit" type="submit">Create account &amp; continue</button>
+            <p class="fine">By continuing you agree to how we handle your data in our <a href="/privacy">privacy policy</a>.</p>
           </form>
         </div>
       </section>
@@ -125,22 +150,30 @@
             <span id="sideRoom"></span>
           </div>
           <nav class="side-nav" aria-label="App">
-            <button type="button" class="nav-item active" data-screen="dashboard"><i>◎</i><span class="l">Dashboard</span><span class="s">Home</span></button>
-            <button type="button" class="nav-item" data-screen="scan"><i>▣</i><span class="l">Move-in scan</span><span class="s">Scan</span></button>
-            <button type="button" class="nav-item" data-screen="complaints"><i>!</i><span class="l">Complaints</span><span class="s">Issues</span></button>
-            <button type="button" class="nav-item" data-screen="claim"><i>₹</i><span class="l">Deposit claim</span><span class="s">Claim</span></button>
-            <button type="button" class="nav-item" data-screen="notices"><i>✉</i><span class="l">Notices</span><span class="s">Notices</span></button>
+            <button type="button" class="nav-item active" data-screen="dashboard"><i aria-hidden="true">⌂</i><span class="l">PG details</span><span class="s">PG</span></button>
+            <button type="button" class="nav-item" data-screen="scan"><i aria-hidden="true">▣</i><span class="l">Move-in scan</span><span class="s">Scan</span></button>
+            <button type="button" class="nav-item" data-screen="complaints"><i aria-hidden="true">!</i><span class="l">Complaints</span><span class="s">Issues</span></button>
+            <button type="button" class="nav-item" data-screen="claim"><i aria-hidden="true">₹</i><span class="l">Deposit audit</span><span class="s">Audit</span></button>
+            <button type="button" class="nav-item" data-screen="notices"><i aria-hidden="true">✉</i><span class="l">Notices</span><span class="s">Notices</span></button>
           </nav>
           <div class="side-foot">
-            <button type="button" class="link" id="editPgBtn">PG details</button>
+            <button type="button" class="link" id="accountBtn" data-jump="account">Privacy &amp; data</button>
             <button type="button" class="link" id="signOutBtn">Log out</button>
           </div>
         </aside>
 
         <div class="main">
           <div class="demo-bar" id="demoBar" hidden>
-            <span>Demo record for Riya Sharma · Room 204, Sunrise PG. AI calls are real; nothing is saved.</span>
+            <span><span class="demo-badge">Demo · fictional data</span> Riya Sharma, Room 204, Sunrise PG is a made-up record. AI calls are real; nothing you do here is saved.</span>
             <button type="button" class="btn small primary" data-go="signup">Create real account</button>
+          </div>
+          <div class="load-state" id="loadState" hidden>
+            <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton short"></div>
+            <p class="muted">Loading your records…</p>
+          </div>
+          <div class="err-state" id="errState" role="alert" hidden>
+            <b>We couldn't load your records.</b> <span id="errMsg"></span>
+            <button type="button" class="btn small ghost" id="retryBtn">Try again</button>
           </div>
 
           <!-- setup -->
@@ -149,17 +182,17 @@
               <h3 id="setupTitle">Add your PG</h3>
               <p class="muted">Enter the details as they appear on your rent receipt or booking message.</p>
               <form id="pgForm" class="form-grid" novalidate>
-                <div><label class="lbl" for="fPg">PG name</label><input id="fPg" placeholder="Sunrise Co-living" /></div>
-                <div><label class="lbl" for="fRoom">Room / bed number</label><input id="fRoom" placeholder="204-B" /></div>
-                <div><label class="lbl" for="fOwner">Owner / warden name</label><input id="fOwner" placeholder="Mahesh Gowda" /></div>
-                <div><label class="lbl" for="fOwnerPhone">Owner WhatsApp number</label><input id="fOwnerPhone" placeholder="+91 98450 11223" /></div>
-                <div class="span2"><label class="lbl" for="fAddr">Full PG address</label><input id="fAddr" placeholder="18th Main, Koramangala, Bengaluru" /></div>
-                <div><label class="lbl" for="fRent">Monthly rent (₹)</label><input id="fRent" type="number" min="1" placeholder="11500" /></div>
-                <div><label class="lbl" for="fDep">Security deposit (₹)</label><input id="fDep" type="number" min="1" placeholder="20000" /></div>
+                <div><label class="lbl" for="fPg">PG name</label><input id="fPg" placeholder="e.g. Sunrise Co-living" /></div>
+                <div><label class="lbl" for="fRoom">Room / bed number</label><input id="fRoom" placeholder="e.g. 204-B" /></div>
+                <div><label class="lbl" for="fOwner">Owner / warden name</label><input id="fOwner" /></div>
+                <div><label class="lbl" for="fOwnerPhone">Owner WhatsApp number</label><input id="fOwnerPhone" placeholder="+91 …" /></div>
+                <div class="span2"><label class="lbl" for="fAddr">Full PG address</label><input id="fAddr" /></div>
+                <div><label class="lbl" for="fRent">Monthly rent (₹)</label><input id="fRent" type="number" min="1" inputmode="numeric" /></div>
+                <div><label class="lbl" for="fDep">Security deposit (₹)</label><input id="fDep" type="number" min="1" inputmode="numeric" /></div>
                 <div><label class="lbl" for="fIn">Move-in date</label><input id="fIn" type="date" /></div>
                 <div><label class="lbl" for="fOut">Move-out date (optional)</label><input id="fOut" type="date" /></div>
-                <div class="span2"><label class="lbl" for="fCode">PG code (optional, links your complaints to the warden's dashboard)</label><input id="fCode" placeholder="e.g. SUNRISE24" /></div>
-                <p class="error span2" id="pgErr"></p>
+                <div class="span2"><label class="lbl" for="fCode">PG code (optional, links your complaints to the warden's dashboard)</label><input id="fCode" placeholder="e.g. SUNRISE24 (demo PG)" /></div>
+                <p class="error span2" id="pgErr" role="alert"></p>
                 <div class="span2 row end">
                   <button type="button" class="btn ghost" id="pgCancel" hidden>Cancel</button>
                   <button type="submit" class="btn primary" id="pgSave">Save PG &amp; start move-in scan</button>
@@ -168,24 +201,32 @@
             </div>
           </section>
 
-          <!-- dashboard -->
+          <!-- PG details (dashboard) -->
           <section class="screen" id="s-dashboard">
-            <div class="screen-head"><div><p class="eyebrow">Dashboard</p><h3 id="hello">Hi</h3></div></div>
+            <div class="screen-head">
+              <div><p class="eyebrow">PG details</p><h3 id="hello">Hi</h3><p class="updated" id="dUpdated"></p></div>
+              <button type="button" class="btn ghost" id="editPgBtn">Edit PG details</button>
+            </div>
+            <div class="deposit-hero">
+              <div class="dh-main">
+                <span>Security deposit</span>
+                <b id="dDeposit">–</b>
+                <small id="dDepositSub"></small>
+              </div>
+              <dl class="dh-facts" id="dFacts"></dl>
+            </div>
             <div class="stats">
-              <div class="stat"><span>Security deposit</span><b id="dDeposit">–</b><small id="dDepositSub"></small></div>
               <div class="stat good"><span>Protected by proof</span><b id="dProtected">–</b><small id="dProtectedSub"></small></div>
               <div class="stat warn"><span>Open issues</span><b id="dOpen">–</b><small id="dOpenSub"></small></div>
               <div class="stat"><span>Move-in record</span><b id="dPhotos">–</b><small id="dPhotosSub"></small></div>
+              <div class="stat"><span>Refund you should get</span><b id="dRefund">–</b><small id="dRefundSub"></small></div>
             </div>
             <div class="grid2">
-              <div class="card">
-                <h4>Next steps</h4>
-                <ol class="steps" id="dSteps"></ol>
-              </div>
-              <div class="card">
-                <h4>Longest unfixed issues</h4>
-                <div id="dIssues" class="mini-list"></div>
-              </div>
+              <div class="card"><h4>PG &amp; owner</h4><dl class="kv" id="dPg"></dl></div>
+              <div class="card"><h4>Next steps</h4><ol class="steps" id="dSteps"></ol></div>
+              <div class="card"><h4>Longest unresolved issues</h4><div id="dIssues" class="mini-list"></div></div>
+              <div class="card"><h4>Recent activity</h4><ul id="dActivity" class="timeline"></ul>
+                <button type="button" class="link" data-jump="account">Full audit log, export &amp; deletion →</button></div>
             </div>
           </section>
 
@@ -193,19 +234,48 @@
           <section class="screen" id="s-scan">
             <div class="screen-head">
               <div><p class="eyebrow">Move-in scan</p><h3>Photograph every corner</h3></div>
-              <button type="button" class="btn primary" id="lockBtn" disabled>Lock move-in record</button>
+              <div class="row">
+                <button type="button" class="btn ghost" id="reportBtn">Evidence report (PDF)</button>
+                <button type="button" class="btn primary" id="lockBtn" disabled>Lock move-in record</button>
+              </div>
             </div>
             <div class="card">
-              <p class="muted">Pick an area, then take or upload a photo (images only, up to 5 MB). Gemini tags any pre-existing stains, cracks or broken fittings.</p>
-              <div class="areas" id="areaPick"></div>
+              <p class="muted">Pick an area, then take or upload a photo (JPEG, PNG or WebP, up to 10 MB). You review it before anything is saved. Gemini then describes any damage that is already there.</p>
+              <div class="areas" id="areaPick" role="group" aria-label="Area"></div>
               <label class="drop" id="drop">
-                <input type="file" id="photoInput" accept="image/*" capture="environment" hidden />
-                <span class="drop-ico">＋</span>
-                <span id="dropText">Capture or upload wall photo</span>
+                <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp" capture="environment" hidden />
+                <span class="drop-ico" aria-hidden="true">＋</span>
+                <span id="dropText">Capture or upload a walls photo</span>
               </label>
-              <p class="error" id="scanErr"></p>
+              <p class="error" id="scanErr" role="alert"></p>
+              <div class="review" id="scanReview" hidden>
+                <img id="rvImg" alt="Photo to review" />
+                <div>
+                  <h4>Review before saving</h4>
+                  <dl class="kv small" id="rvMeta"></dl>
+                  <label class="lbl" for="rvArea">Area</label>
+                  <select id="rvArea"></select>
+                  <div class="row">
+                    <button type="button" class="btn primary" id="rvSave">Analyse &amp; add to record</button>
+                    <button type="button" class="btn ghost" id="rvCancel">Cancel</button>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="photo-grid" id="photoGrid"></div>
+            <div class="grid2 top">
+              <div class="card"><h4>Evidence history</h4><ul class="timeline" id="evHistory"></ul></div>
+              <div class="card policy" id="policyCard">
+                <h4>Correction &amp; deletion policy</h4>
+                <ul>
+                  <li>Before you lock, you can edit the AI description or remove a photo.</li>
+                  <li>After you lock, a photo, its timestamp and its SHA-256 fingerprint can't be edited or deleted, even by you.</li>
+                  <li>Spotted a mistake? Add a correction. It is saved as a new dated note beside the photo; the original stays as it was.</li>
+                  <li>Deleting your account removes all of your records and photo files.</li>
+                </ul>
+                <a href="/privacy#policy">Full policy</a>
+              </div>
+            </div>
           </section>
 
           <!-- complaints -->
@@ -215,26 +285,36 @@
               <div class="card">
                 <p class="muted">Say it like you'd tell a friend, in English, Hindi or Hinglish.</p>
                 <div class="textarea-wrap">
+                  <label class="sr" for="cText">Describe the issue</label>
                   <textarea id="cText" rows="5" placeholder="e.g. bathroom me 2 din se garam paani nahi aa raha"></textarea>
-                  <button class="mic" id="micBtn" type="button" title="Speak" aria-label="Speak your complaint"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
+                  <button class="mic" id="micBtn" type="button" title="Speak" aria-label="Speak your complaint"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg></button>
                 </div>
+                <p class="hint" id="micHint" hidden></p>
                 <div class="chips" id="cExamples">
                   <button type="button" class="chip">Wi-Fi disconnects every night 7 to 11</button>
                   <button type="button" class="chip">Khana mein keede mile aaj lunch mein</button>
                   <button type="button" class="chip">No hot water in bathroom for 3 days</button>
                   <button type="button" class="chip">Room door lock is broken</button>
                 </div>
-                <label class="attach"><input type="file" id="cPhoto" accept="image/*" hidden /><span id="cPhotoLbl">📎 Attach photo (optional)</span></label>
+                <label class="attach"><input type="file" id="cPhoto" accept="image/jpeg,image/png,image/webp" hidden /><span id="cPhotoLbl">📎 Attach photo (optional)</span></label>
+                <img id="cPhotoPrev" class="thumb" alt="Attached photo preview" hidden />
                 <button class="btn primary full" id="cAnalyze" type="button">Analyse with AI</button>
-                <p class="error" id="cErr"></p>
+                <p class="error" id="cErr" role="alert"></p>
               </div>
               <div class="card" id="cResult">
-                <div class="empty" id="cEmpty"><div class="empty-icon">✦</div><p>AI sorts the category and urgency and drafts a formal complaint here.</p></div>
+                <div class="empty" id="cEmpty"><div class="empty-icon" aria-hidden="true">✦</div><p>AI suggests a category and urgency and drafts a description and message here. You can change all of it before logging.</p></div>
                 <div id="cBody" hidden>
-                  <div class="badges"><span class="badge" id="rCat"></span><span class="badge urg" id="rUrg"></span><span class="badge ghost" id="rMode" hidden>offline</span></div>
-                  <input id="rTitle" class="title-input" aria-label="Title" />
-                  <label class="lbl" for="rDraft">Message to warden (edit if you like)</label>
-                  <textarea id="rDraft" rows="8"></textarea>
+                  <div class="badges"><span class="badge" id="rCat"></span><span class="badge urg" id="rUrg"></span><span class="badge ghost" id="rMode" hidden>offline rules</span></div>
+                  <div class="form-grid">
+                    <div><label class="lbl" for="rCatSel">Category <small id="rCatAi"></small></label><select id="rCatSel"></select></div>
+                    <div><label class="lbl" for="rUrgSel">Urgency</label><select id="rUrgSel"><option>High</option><option>Medium</option><option>Low</option></select></div>
+                  </div>
+                  <label class="lbl" for="rTitle">Title</label>
+                  <input id="rTitle" />
+                  <label class="lbl" for="rDesc">Description (edit before logging)</label>
+                  <textarea id="rDesc" rows="3"></textarea>
+                  <label class="lbl" for="rDraft">Message to warden</label>
+                  <textarea id="rDraft" rows="6"></textarea>
                   <div class="similar" id="similar" hidden></div>
                   <div class="row">
                     <button class="btn primary" id="cSave" type="button">Log complaint</button>
@@ -246,34 +326,43 @@
             <div class="list-head">
               <h4>Your complaints</h4>
               <div class="filters">
-                <select id="fStatus" aria-label="Status filter"><option value="">All statuses</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="fixed">Fixed</option></select>
+                <select id="fStatus" aria-label="Status filter"><option value="">All statuses</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="fixed">Resolved</option></select>
                 <select id="fCat" aria-label="Category filter"><option value="">All categories</option></select>
               </div>
             </div>
             <div id="cList" class="c-list"></div>
           </section>
 
-          <!-- claim -->
+          <!-- deposit audit -->
           <section class="screen" id="s-claim">
             <div class="screen-head">
-              <div><p class="eyebrow">Deposit claim</p><h3>Check every deduction</h3></div>
-              <button type="button" class="btn ghost" id="auditBtn">Re-audit all with AI</button>
+              <div><p class="eyebrow">Deposit audit</p><h3>Check every deduction</h3></div>
+              <div class="row">
+                <button type="button" class="btn ghost" id="auditBtn">Re-audit all</button>
+                <button type="button" class="btn primary" id="toNoticeBtn">Generate dispute notice</button>
+              </div>
             </div>
-            <div class="stats three">
-              <div class="stat"><span>Deducted by owner</span><b id="kTotal">₹0</b></div>
-              <div class="stat good"><span>You can dispute</span><b id="kDispute">₹0</b><small>unfair + unclear</small></div>
+            <div class="stats">
+              <div class="stat"><span>Original deposit</span><b id="kDeposit">₹0</b><small id="kDepositSub"></small></div>
+              <div class="stat"><span>Deducted by owner</span><b id="kTotal">₹0</b><small id="kTotalSub"></small></div>
+              <div class="stat good"><span>You can dispute</span><b id="kDispute">₹0</b><small id="kDisputeSub">unsupported + unclear</small></div>
               <div class="stat"><span>Refund you should get</span><b id="kRefund">₹0</b><small id="kRefundSub"></small></div>
             </div>
+            <div class="alert" id="kAlert" hidden></div>
             <div class="card">
               <h4>Add a deduction the owner claimed</h4>
               <form id="dedForm" class="ded-form" novalidate>
-                <input id="dReason" placeholder="e.g. Wall repainting for damp stain near switchboard" aria-label="Reason" />
-                <input id="dAmount" type="number" min="1" placeholder="₹ amount" aria-label="Amount" />
+                <label class="sr" for="dReason">Reason</label>
+                <input id="dReason" placeholder="Reason as the owner wrote it, e.g. wall repainting" />
+                <label class="sr" for="dAmount">Amount</label>
+                <input id="dAmount" type="number" min="1" inputmode="numeric" placeholder="₹ amount" />
                 <button class="btn primary" id="dAdd" type="submit">Add &amp; audit</button>
               </form>
-              <p class="error" id="dErr"></p>
+              <p class="error" id="dErr" role="alert"></p>
+              <p class="hint">Each deduction is compared with your locked move-in photos and your complaint history. You decide what to dispute.</p>
             </div>
             <div id="dedList" class="ded-list"></div>
+            <p class="disclaimer"><b>Not legal advice.</b> FixFlow's audit is an automated reading of your own evidence to help you ask the right questions. Check the facts before you send anything, and speak to a lawyer or your state's rent authority for advice on your situation.</p>
           </section>
 
           <!-- notices -->
@@ -281,13 +370,39 @@
             <div class="screen-head">
               <div><p class="eyebrow">Notices</p><h3>Three steps of escalation</h3></div>
               <div class="row">
-                <button type="button" class="btn ghost" id="pdfBtn">Download PDF</button>
+                <button type="button" class="btn ghost" id="pdfBtn">Download full pack (PDF)</button>
                 <button type="button" class="btn primary" id="genBtn">Generate 3 drafts</button>
               </div>
             </div>
             <p class="muted" id="nContext"></p>
             <div class="notices" id="nList"></div>
-            <p class="disclaimer">FixFlow helps you communicate with evidence. It is not legal advice.</p>
+            <p class="disclaimer"><b>Not legal advice.</b> FixFlow helps you communicate with evidence. Review every date and amount before sending.</p>
+          </section>
+
+          <!-- account -->
+          <section class="screen" id="s-account">
+            <div class="screen-head"><div><p class="eyebrow">Privacy &amp; data</p><h3>Your data, your call</h3></div></div>
+            <div class="grid2 top">
+              <div class="card">
+                <h4>Download my data</h4>
+                <p class="muted">A JSON file with your profile, PG details, photos (links, fingerprints, AI notes), corrections, complaints with history, deductions, notices and audit log.</p>
+                <button type="button" class="btn ghost" id="exportBtn">Download my data (JSON)</button>
+              </div>
+              <div class="card danger">
+                <h4>Delete my account and data</h4>
+                <p class="muted">Permanently deletes every FixFlow record and photo file tied to your account, then your login. This can't be undone, so download your data first.</p>
+                <label class="lbl" for="delConfirm">Type DELETE to confirm</label>
+                <input id="delConfirm" autocomplete="off" />
+                <button type="button" class="btn danger-btn" id="deleteBtn" disabled>Delete everything</button>
+                <p class="error" id="delErr" role="alert"></p>
+              </div>
+            </div>
+            <div class="card">
+              <h4>Audit log</h4>
+              <p class="muted">Written by the database when you add, lock, correct, audit or finalise something. You can read it but nobody can edit it.</p>
+              <ul class="timeline" id="auditList"></ul>
+            </div>
+            <p class="muted"><a href="/privacy">Privacy policy</a> · <a href="/privacy#policy">Correction &amp; deletion policy</a></p>
           </section>
         </div>
       </section>
@@ -299,13 +414,15 @@
     <div class="wrap">
       <div class="screen-head">
         <div><p class="eyebrow">For wardens</p><h2 class="sec-title">Fix the urgent things first</h2>
-        <p class="sec-sub">Every complaint in your PG, sorted by urgency and residents affected. Demo: code <b>SUNRISE24</b>, PIN <b>1234</b>.</p></div>
+        <p class="sec-sub">Every complaint in your PG, sorted by urgency and residents affected. Each status change and note is added to the resident's complaint history. Demo PG (fictional): code <b>SUNRISE24</b>, PIN <b>1234</b>.</p></div>
       </div>
       <form id="wForm" class="w-form card" novalidate>
-        <input id="wCode" placeholder="PG code" value="SUNRISE24" aria-label="PG code" />
-        <input id="wPin" type="password" inputmode="numeric" placeholder="PIN" aria-label="Warden PIN" />
+        <label class="sr" for="wCode">PG code</label>
+        <input id="wCode" placeholder="PG code" value="SUNRISE24" />
+        <label class="sr" for="wPin">Warden PIN</label>
+        <input id="wPin" type="password" inputmode="numeric" placeholder="PIN" />
         <button class="btn primary" id="wGo" type="submit">Open dashboard</button>
-        <p class="error" id="wErr"></p>
+        <p class="error" id="wErr" role="alert"></p>
       </form>
       <div id="wBoard" hidden>
         <div class="stats three" id="wStats"></div>
@@ -316,21 +433,37 @@
 
   <footer class="foot wrap">
     <span class="brand dark">FIXFLOW</span>
-    <span>Report it. Track it. Prove it. · Built for PG &amp; hostel residents in Bengaluru</span>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="#how">How it works</a><a href="#app">App</a><a href="#warden">For wardens</a><a href="/privacy">Privacy</a><a href="/privacy#policy">Data policy</a>
+    </nav>
+    <span>Report it. Track it. Prove it. · Not legal advice.</span>
   </footer>
 
-  <dialog id="lockDlg">
-    <h3>Lock move-in record?</h3>
+  <dialog id="lockDlg" aria-labelledby="lockTitle">
+    <h3 id="lockTitle">Lock move-in record?</h3>
     <p class="muted" id="lockText"></p>
+    <ul class="lock-list" id="lockList"></ul>
+    <label class="check"><input type="checkbox" id="lockAgree" /> I confirm these photos show the room as it was when I moved in.</label>
     <div class="row end">
       <button class="btn ghost" type="button" id="lockCancel">Cancel</button>
-      <button class="btn primary" type="button" id="lockConfirm">Confirm &amp; lock</button>
+      <button class="btn primary" type="button" id="lockConfirm" disabled>Confirm &amp; lock</button>
+    </div>
+  </dialog>
+
+  <dialog id="previewDlg" class="wide" aria-labelledby="pvTitle">
+    <div class="pv-head"><h3 id="pvTitle">Preview</h3><span class="badge ghost" id="pvState"></span></div>
+    <div class="letter" id="pvBody"></div>
+    <label class="check" id="pvCheckWrap"><input type="checkbox" id="pvAgree" /> I've checked every date, amount and fact in this notice.</label>
+    <div class="row end">
+      <button class="btn ghost" type="button" id="pvClose">Back to editing</button>
+      <button class="btn ghost" type="button" id="pvFinal">Mark as final</button>
+      <button class="btn primary" type="button" id="pvPdf">Download PDF</button>
     </div>
   </dialog>
 
   <dialog id="imgDlg"><img id="imgBig" alt="" /><button class="btn small ghost" type="button" id="imgClose">Close</button></dialog>
 
-  <div class="toast" id="toast" role="status"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>

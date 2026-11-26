@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy policy · FixFlow</title>
+  <meta name="description" content="How FixFlow collects, stores, uses and deletes your data, and its correction and deletion policy for move-in evidence." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e0603a'/><path d='M9 22l5-12 4 8 2-4 3 8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  <style>
+    :root { --ink: #0f2a3a; --ink-2: #4a6170; --line: #e6ebef; --soft: #f5f7f9; --accent: #c24a27; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #fff; line-height: 1.65; -webkit-font-smoothing: antialiased; }
+    header { border-bottom: 1px solid var(--line); background: #fff; position: sticky; top: 0; z-index: 2; }
+    header .in { width: min(820px, 92vw); margin: auto; display: flex; justify-content: space-between; align-items: center; padding: 14px 0; }
+    .brand { font: 700 24px "Barlow Condensed", Inter, sans-serif; letter-spacing: .5px; color: var(--ink); text-decoration: none; }
+    header a.back { color: var(--ink); font-weight: 600; font-size: 14px; text-decoration: none; padding: 8px 16px; border: 1px solid var(--line); border-radius: 999px; }
+    header a.back:hover { background: var(--soft); }
+    main { width: min(820px, 92vw); margin: 0 auto; padding: 40px 0 80px; }
+    h1 { font-size: clamp(30px, 5vw, 44px); letter-spacing: -.02em; line-height: 1.1; margin: 0 0 8px; }
+    h2 { font-size: 21px; margin: 38px 0 8px; letter-spacing: -.01em; scroll-margin-top: 80px; }
+    p, li { font-size: 15.5px; color: #26404f; }
+    ul { padding-left: 22px; }
+    li { margin: 4px 0; }
+    a { color: var(--accent); }
+    .muted { color: var(--ink-2); font-size: 14px; }
+    .box { background: var(--soft); border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14.5px; margin: 8px 0; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { background: var(--soft); font-weight: 600; }
+    footer { border-top: 1px solid var(--line); padding: 24px 0; text-align: center; font-size: 13px; color: var(--ink-2); }
+  </style>
+</head>
+<body>
+  <header><div class="in"><a class="brand" href="/">FIXFLOW</a><a class="back" href="/#app">Back to the app</a></div></header>
+  <main>
+    <h1>Privacy policy</h1>
+    <p class="muted">Last updated 26 November 2026 · Applies to fixflow-steel.vercel.app</p>
+    <div class="box">
+      <p><b>In short:</b> FixFlow keeps your PG records so that you can prove what happened. Only you can read your records. We don't sell data, show ads or use trackers. You can download everything as a file, and you can delete your account and all of its data from inside the app at any time.</p>
+    </div>
+
+    <h2 id="collect">What we collect</h2>
+    <table>
+      <tr><th>Data</th><th>Why</th></tr>
+      <tr><td>Name, email, optional phone; or your Google name, email and profile picture if you sign in with Google</td><td>To create your account and sign you in. With Google we only ask for basic profile and email; we never access your Gmail, Drive or contacts.</td></tr>
+      <tr><td>PG details: PG name, room, address, owner name and number, rent, deposit, dates</td><td>To show your tenancy and write notices.</td></tr>
+      <tr><td>Move-in photos, their file name, type, size, last-modified time and SHA-256 fingerprint, plus upload and lock times</td><td>To keep tamper-evident proof of the room's condition.</td></tr>
+      <tr><td>Complaints, attached photos, status history and replies you log</td><td>To track issues and show how long they stayed unresolved.</td></tr>
+      <tr><td>Deductions, audit results, notices and an audit log of your actions</td><td>To check deductions against your evidence and keep an honest record of changes.</td></tr>
+    </table>
+
+    <h2 id="ai">AI processing</h2>
+    <p>When you ask FixFlow to analyse something, the relevant text or a reduced copy of the photo is sent to Google's Gemini API through our server to get a category, description or audit. Nothing is sent to AI unless you trigger that step. If AI is unavailable, FixFlow uses simple built-in rules instead.</p>
+
+    <h2 id="storage">Where it is stored and who can see it</h2>
+    <ul>
+      <li>Records and photos are stored with Supabase (Postgres database and file storage) in the AWS ap-south-1 (Mumbai) region. The app is served by Vercel.</li>
+      <li>Database rows are protected by row-level security: each record can only be read by the account that created it.</li>
+      <li>If you enter a PG code, the warden of that PG can see the complaints you file there (your name, room, complaint text and photo) and can update their status. Wardens can't see your photos of the room, deductions, notices or account details.</li>
+      <li>Photo files are stored at long, random links so that they can be shown in the app and in your reports. Anyone you give a link to can open that image, so share links with care.</li>
+      <li>Your sign-in session is kept in your browser's local storage. The demo uses session storage only.</li>
+    </ul>
+
+    <h2 id="demo">Demo mode</h2>
+    <p>The demo shows a fictional tenant. Nothing you do in the demo is saved to our database. AI features in the demo still send the text or photo you provide to Gemini for that one request.</p>
+
+    <h2 id="policy">Correction &amp; deletion policy</h2>
+    <ul>
+      <li><b>Before locking:</b> you can edit the AI description of a move-in photo or remove the photo.</li>
+      <li><b>After locking:</b> the photo, its upload and lock times and its SHA-256 fingerprint are read-only. The database refuses edits and deletion from the app, including from you. This is what makes the record useful as evidence.</li>
+      <li><b>Corrections:</b> if something is wrong, add a correction. It is stored as a new dated note next to the photo and the original stays unchanged.</li>
+      <li><b>Complaint history:</b> status changes, warden notes and replies you log are added as new dated entries and are never overwritten.</li>
+      <li><b>Audit log:</b> the database records when you add, lock, correct, audit, finalise, download or export something. You can read your log in the app; nobody can edit it.</li>
+      <li><b>Account deletion:</b> <i>Privacy &amp; data → Delete my account and data</i> permanently deletes your profile, PG details, photos and photo files, corrections, complaints and their history, deductions, notices, audit log and finally your login. It can't be undone.</li>
+    </ul>
+
+    <h2 id="rights">Your choices</h2>
+    <ul>
+      <li><b>Download your data:</b> <i>Privacy &amp; data → Download my data</i> gives you a JSON file of everything tied to your account.</li>
+      <li><b>Delete:</b> as described above, at any time.</li>
+      <li><b>Retention:</b> we keep your data until you delete it.</li>
+    </ul>
+
+    <h2 id="third">Third parties</h2>
+    <p>Supabase (database, storage, sign-in), Vercel (hosting), Google (Gemini AI, optional Google sign-in) and Google Fonts (typefaces) process data only to provide these functions. We don't sell or share data for advertising.</p>
+
+    <h2 id="legal">Not legal advice</h2>
+    <p>FixFlow organises your own evidence and drafts messages. It is not a law firm and its audit results are not legal advice.</p>
+
+    <h2 id="contact">Contact</h2>
+    <p>Questions or requests: open an issue at <a href="https://github.com/Ak759-wq/FixFlow/issues" rel="noopener noreferrer">github.com/Ak759-wq/FixFlow/issues</a>. Please don't post personal data there; ask for a private contact instead.</p>
+  </main>
+  <footer><a href="/">FixFlow</a> · <a href="/#how">How it works</a> · <a href="/privacy">Privacy</a></footer>
+</body>
+</html>
