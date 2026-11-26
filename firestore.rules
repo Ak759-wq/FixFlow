@@ -1,87 +1,209 @@
 rules_version = '2';
+// FixFlow v3 Firestore rules. Works without Cloud Functions:
+// - every tenant document is readable/writable only by its owner (owner == auth.uid)
+// - locked move-in photos, evidence corrections, complaint history and the audit log are append-only
+// - wardens join a PG with its PIN (checked here against pg_secrets, which nobody can read)
+//   and can then read and update that PG's complaints
+// - "+1" support goes through a public, name-free board (pgs/{code}/open/{complaintId})
+// - deleting an account first writes a deletions/{uid} tombstone, which is the only thing that
+//   allows locked evidence and history to be deleted
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function owns(d) { return signedIn() && d.owner == me(); }
+    function deleting() { return signedIn() && exists(/databases/$(database)/documents/deletions/$(me())); }
+    function isWarden(code) {
+      return signedIn() && code is string && exists(/databases/$(database)/documents/pgs/$(code)/wardens/$(me()));
+    }
+    function keysOnly(keys) { return request.resource.data.keys().hasOnly(keys); }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function text(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+    function status(s) { return s in ['open', 'in_progress', 'fixed']; }
+    function fixedAtOk() {
+      return (request.resource.data.status == 'fixed'
+              && (request.resource.data.fixed_at == request.time
+                  || (resource.data.status == 'fixed' && request.resource.data.fixed_at == resource.data.fixed_at)))
+          || (request.resource.data.status != 'fixed' && request.resource.data.fixed_at == null);
     }
 
-    function owns(data) {
-      return signedIn() && data.owner == request.auth.uid;
-    }
-
+    // ---------- PGs, wardens, public board ----------
     match /pgs/{code} {
       allow read: if true;
       allow write: if false;
+
+      match /wardens/{uid} {
+        allow read: if signedIn() && me() == uid;
+        allow create: if signedIn() && me() == uid && keysOnly(['pin', 'joined_at'])
+          && request.resource.data.joined_at == request.time
+          && request.resource.data.pin == get(/databases/$(database)/documents/pg_secrets/$(code)).data.pin;
+        allow update, delete: if false;
+      }
+
+      // name-free copy of each open complaint, so co-residents can "+1" it
+      match /open/{cid} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.resource.data.owner == me()
+          && keysOnly(['owner', 'title', 'category', 'urgency', 'status', 'supporters', 'reported_at', 'updated_at'])
+          && request.resource.data.supporters == 1 && request.resource.data.status == 'open'
+          && getAfter(/databases/$(database)/documents/complaints/$(cid)).data.owner == me()
+          && getAfter(/databases/$(database)/documents/complaints/$(cid)).data.pg_code == code;
+        allow update: if signedIn() && (
+            (changed().hasOnly(['supporters'])
+              && request.resource.data.supporters == resource.data.supporters + 1
+              && resource.data.owner != me()
+              && !exists(/databases/$(database)/documents/pgs/$(code)/open/$(cid)/supporters/$(me()))
+              && existsAfter(/databases/$(database)/documents/pgs/$(code)/open/$(cid)/supporters/$(me())))
+            || ((resource.data.owner == me() || isWarden(code))
+              && changed().hasOnly(['status', 'updated_at']) && status(request.resource.data.status)
+              && request.resource.data.updated_at == request.time));
+        allow delete: if signedIn() && resource.data.owner == me() && deleting();
+
+        match /supporters/{uid} {
+          allow read: if signedIn() && me() == uid;
+          allow create: if signedIn() && me() == uid && keysOnly(['at']) && request.resource.data.at == request.time;
+          allow update, delete: if false;
+        }
+      }
+    }
+    match /pg_secrets/{code} { allow read, write: if false; }
+
+    // ---------- account deletion tombstone ----------
+    match /deletions/{uid} {
+      allow read: if signedIn() && me() == uid;
+      allow create: if signedIn() && me() == uid && keysOnly(['requested_at']) && request.resource.data.requested_at == request.time;
+      allow update, delete: if false;
     }
 
+    // ---------- profile + tenancy ----------
     match /profiles/{uid} {
-      allow read, create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['name', 'phone', 'created_at']);
-      allow delete: if false;
+      allow read: if signedIn() && me() == uid;
+      allow create, update: if signedIn() && me() == uid && keysOnly(['name', 'phone', 'created_at'])
+        && text(request.resource.data.name, 1, 120);
+      allow delete: if signedIn() && me() == uid && deleting();
     }
 
     match /tenancies/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.owner == request.auth.uid;
-      allow update: if signedIn() && request.auth.uid == uid
-        && resource.data.owner == request.auth.uid
-        && request.resource.data.owner == resource.data.owner
-        && request.resource.data.created_at == resource.data.created_at;
-      allow delete: if false;
+      allow read: if signedIn() && me() == uid;
+      allow create: if signedIn() && me() == uid && request.resource.data.owner == me()
+        && request.resource.data.created_at == request.time
+        && request.resource.data.deposit is number && request.resource.data.deposit > 0
+        && request.resource.data.monthly_rent is number && request.resource.data.monthly_rent > 0;
+      allow update: if signedIn() && me() == uid && resource.data.owner == me()
+        && request.resource.data.owner == me()
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.deposit is number && request.resource.data.deposit > 0;
+      allow delete: if signedIn() && me() == uid && deleting();
     }
 
+    // ---------- move-in evidence ----------
     match /photos/{photoId} {
-      allow read: if owns(resource.data);
+      allow read: if signedIn() && resource.data.owner == me();
       allow create: if owns(request.resource.data)
+        && request.resource.data.area in ['bed', 'bathroom', 'wall', 'furniture']
         && request.resource.data.locked == false
+        && request.resource.data.locked_at == null
         && request.resource.data.captured_at == request.time
-        && request.resource.data.locked_at == null;
-      allow update: if owns(resource.data)
-        && !resource.data.locked
-        && request.resource.data.owner == resource.data.owner
-        && request.resource.data.captured_at == resource.data.captured_at
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['locked', 'locked_at', 'photo_url'])
-        && ((request.resource.data.locked == false
-            && request.resource.data.locked_at == resource.data.locked_at)
-          || (request.resource.data.locked == true && request.resource.data.locked_at == request.time));
-      allow delete: if owns(resource.data) && !resource.data.locked;
+        && request.resource.data.file_sha256 is string && request.resource.data.file_sha256.matches('^[0-9a-f]{64}$')
+        && request.resource.data.file_bytes is int && request.resource.data.file_bytes <= 10485760
+        && request.resource.data.file_type in ['image/jpeg', 'image/png', 'image/webp'];
+      // before lock: attach the uploaded file once, review the AI description, lock.
+      // the fingerprint, file facts and upload time never change.
+      allow update: if signedIn() && resource.data.owner == me() && !resource.data.locked
+        && changed().hasOnly(['locked', 'locked_at', 'photo_url', 'ai_summary', 'ai_tags'])
+        && (resource.data.photo_url == null || request.resource.data.photo_url == resource.data.photo_url)
+        && ((request.resource.data.locked == false && request.resource.data.locked_at == null)
+            || (request.resource.data.locked == true && request.resource.data.locked_at == request.time));
+      allow delete: if signedIn() && resource.data.owner == me() && (!resource.data.locked || deleting());
     }
 
-    match /complaints/{complaintId} {
-      allow read: if owns(resource.data);
+    // corrections are new dated entries; never edited
+    match /evidence_notes/{id} {
+      allow read: if signedIn() && resource.data.owner == me();
+      allow create: if owns(request.resource.data) && keysOnly(['owner', 'photo_id', 'note', 'created_at'])
+        && request.resource.data.created_at == request.time && text(request.resource.data.note, 3, 1000)
+        && get(/databases/$(database)/documents/photos/$(request.resource.data.photo_id)).data.owner == me();
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.owner == me() && deleting();
+    }
+
+    // ---------- complaints ----------
+    match /refs/{ref} {
+      // create-only ledger that makes complaint reference IDs unique
+      allow read, update: if false;
+      allow create: if signedIn() && ref.matches('^FF-[0-9]{4}-[0-9A-Z]{4}$')
+        && keysOnly(['owner', 'complaint']) && request.resource.data.owner == me()
+        && getAfter(/databases/$(database)/documents/complaints/$(request.resource.data.complaint)).data.ref == ref;
+      allow delete: if signedIn() && resource.data.owner == me() && deleting();
+    }
+
+    match /complaints/{cid} {
+      allow read: if signedIn() && (resource.data.owner == me() || isWarden(resource.data.pg_code));
       allow create: if owns(request.resource.data)
         && request.resource.data.status == 'open'
-        && request.resource.data.supporters == 1
         && request.resource.data.reported_at == request.time
-        && request.resource.data.fixed_at == null;
-      allow update: if owns(resource.data)
-        && resource.data.status != 'fixed'
-        && request.resource.data.owner == resource.data.owner
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'fixed_at'])
-        && request.resource.data.status == 'fixed'
-        && request.resource.data.fixed_at == request.time;
-      allow delete: if false;
+        && request.resource.data.updated_at == request.time
+        && request.resource.data.fixed_at == null
+        && request.resource.data.warden_note == null
+        && request.resource.data.ref is string
+        && existsAfter(/databases/$(database)/documents/refs/$(request.resource.data.ref))
+        && text(request.resource.data.title, 3, 160) && text(request.resource.data.description, 3, 4000)
+        && (request.resource.data.pg_code == null || exists(/databases/$(database)/documents/pgs/$(request.resource.data.pg_code)));
+      allow update: if signedIn() && status(request.resource.data.status) && fixedAtOk()
+        && request.resource.data.updated_at == request.time
+        && ((resource.data.owner == me()
+              && changed().hasOnly(['status', 'fixed_at', 'updated_at', 'title', 'description']))
+          || (isWarden(resource.data.pg_code)
+              && changed().hasOnly(['status', 'fixed_at', 'updated_at', 'warden_note'])));
+      allow delete: if signedIn() && resource.data.owner == me() && deleting();
     }
 
-    match /deductions/{deductionId} {
-      allow read: if owns(resource.data);
-      allow create: if owns(request.resource.data)
-        && request.resource.data.created_at == request.time;
-      allow update: if owns(resource.data)
-        && request.resource.data.owner == resource.data.owner
-        && request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['ai_verdict', 'ai_reason', 'matched_photo_id']);
-      allow delete: if owns(resource.data);
+    // status history: append-only, written by the resident or by a warden of that PG
+    match /complaint_events/{id} {
+      allow read: if signedIn() && resource.data.owner == me();
+      allow create: if signedIn() && request.resource.data.created_at == request.time
+        && keysOnly(['owner', 'complaint_id', 'kind', 'from_status', 'to_status', 'note', 'actor', 'created_at'])
+        && request.resource.data.kind in ['created', 'status', 'note', 'response']
+        && (request.resource.data.note == null || text(request.resource.data.note, 1, 1000))
+        && getAfter(/databases/$(database)/documents/complaints/$(request.resource.data.complaint_id)).data.owner == request.resource.data.owner
+        && ((request.resource.data.actor == 'resident' && request.resource.data.owner == me())
+          || (request.resource.data.actor == 'warden'
+              && isWarden(getAfter(/databases/$(database)/documents/complaints/$(request.resource.data.complaint_id)).data.pg_code)));
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.owner == me() && deleting();
     }
 
+    // ---------- deposit audit ----------
+    match /deductions/{id} {
+      allow read: if signedIn() && resource.data.owner == me();
+      allow create: if owns(request.resource.data) && request.resource.data.created_at == request.time
+        && request.resource.data.amount is int && request.resource.data.amount > 0
+        && text(request.resource.data.reason, 2, 500);
+      allow update: if signedIn() && resource.data.owner == me()
+        && changed().hasOnly(['ai_verdict', 'ai_reason', 'matched_photo_id', 'matched_complaint_id', 'tenant_position', 'audited_at', 'ai_source'])
+        && (request.resource.data.tenant_position == null || request.resource.data.tenant_position in ['accept', 'dispute']);
+      allow delete: if signedIn() && resource.data.owner == me();
+    }
+
+    // ---------- audit trail (append-only) ----------
+    match /audit_log/{id} {
+      allow read: if signedIn() && resource.data.owner == me();
+      allow create: if owns(request.resource.data) && request.resource.data.created_at == request.time
+        && keysOnly(['owner', 'action', 'entity', 'entity_id', 'detail', 'created_at'])
+        && text(request.resource.data.action, 1, 40) && text(request.resource.data.entity, 1, 40);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.owner == me() && deleting();
+    }
+
+    // ---------- notices ----------
     match /users/{uid}/notices/{kind} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.owner == request.auth.uid
-        && request.resource.data.body is string;
-      allow delete: if false;
+      allow read: if signedIn() && me() == uid;
+      allow create, update: if signedIn() && me() == uid && kind in ['whatsapp', 'formal', 'grievance']
+        && request.resource.data.owner == me() && text(request.resource.data.body, 1, 20000)
+        && request.resource.data.updated_at == request.time
+        && (request.resource.data.finalized_at == null || request.resource.data.finalized_at == request.time
+            || (resource != null && request.resource.data.finalized_at == resource.data.finalized_at));
+      allow delete: if signedIn() && me() == uid && deleting();
     }
 
     match /{document=**} {

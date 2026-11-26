@@ -1,31 +1,31 @@
 rules_version = '2';
+// FixFlow v3 storage rules: owner-only files, JPEG/PNG/WebP up to 10 MB,
+// move-in files can't be removed once their photo is locked (except during account deletion).
 service firebase.storage {
   match /b/{bucket}/o {
-    function owns(uid) {
-      return request.auth != null && request.auth.uid == uid;
+    function owns(uid) { return request.auth != null && request.auth.uid == uid; }
+    function isImage() {
+      return request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
-
-    function moveInPhotoIsUnlocked(uid, photoId) {
+    function deleting(uid) { return firestore.exists(/databases/(default)/documents/deletions/$(uid)); }
+    function photoUnlocked(uid, photoId) {
       return firestore.get(/databases/(default)/documents/photos/$(photoId)).data.owner == uid
         && firestore.get(/databases/(default)/documents/photos/$(photoId)).data.locked == false;
     }
 
     match /users/{uid}/movein/{photoId} {
       allow read: if owns(uid);
-      allow create: if owns(uid)
-        && moveInPhotoIsUnlocked(uid, photoId)
-        && request.resource.size <= 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
-      allow delete: if owns(uid) && moveInPhotoIsUnlocked(uid, photoId);
+      allow create: if owns(uid) && isImage() && photoUnlocked(uid, photoId);
       allow update: if false;
+      allow delete: if owns(uid) && (deleting(uid) || photoUnlocked(uid, photoId));
     }
 
     match /users/{uid}/complaints/{fileName} {
       allow read: if owns(uid);
-      allow create: if owns(uid)
-        && request.resource.size <= 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
-      allow update, delete: if false;
+      allow create: if owns(uid) && isImage();
+      allow update: if false;
+      allow delete: if owns(uid) && deleting(uid);
     }
 
     match /{allPaths=**} {
